@@ -111,15 +111,6 @@ void _new_thread(struct k_thread *thread, k_thread_stack_t *stack,
 	 * initial values in all other registers/thread entries are
 	 * irrelevant.
 	 */
-
-#ifdef CONFIG_THREAD_MONITOR
-	/*
-	 * In debug mode thread->entry give direct access to the thread entry
-	 * and the corresponding parameters.
-	 */
-	thread->entry = (struct __thread_entry *)(pInitCtx);
-	thread_monitor_init(thread);
-#endif
 }
 
 #ifdef CONFIG_USERSPACE
@@ -133,6 +124,12 @@ FUNC_NORETURN void _arch_user_mode_enter(k_thread_entry_t user_entry,
 		(u32_t)_k_priv_stack_find(_current->stack_obj);
 	_current->arch.priv_stack_size =
 		(u32_t)CONFIG_PRIVILEGED_STACK_SIZE;
+
+	/* FIXME: Need a general API for aligning stacks so thet the initial
+	 * user thread stack pointer doesn't overshoot the granularity of MPU
+	 * regions, that works for ARM/NXP/QEMU.
+	 */
+	_current->stack_info.size &= ~0x1f;
 
 	_arm_userspace_enter(user_entry, p1, p2, p3,
 			     (u32_t)_current->stack_info.start,
@@ -166,4 +163,4 @@ void configure_builtin_stack_guard(struct k_thread *thread)
 #error "Built-in PSP limit checks not supported by HW"
 #endif
 }
-#endif /* CONFIG_BUIILTIN_STACK_GUARD */
+#endif /* CONFIG_BUILTIN_STACK_GUARD */

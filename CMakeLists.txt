@@ -1,3 +1,13 @@
+if(NOT DEFINED ZEPHYR_BINARY_DIR)
+  message(FATAL_ERROR "A user error has occured.
+cmake was invoked with '${CMAKE_CURRENT_LIST_DIR}' specified as the source directory,
+but it must be invoked with an application source directory,
+such as '${CMAKE_CURRENT_LIST_DIR}/samples/hello_world'.
+Debug variables:
+CMAKE_CACHEFILE_DIR: ${CMAKE_CACHEFILE_DIR}
+")
+endif()
+
 project(Zephyr-Kernel VERSION ${PROJECT_VERSION})
 enable_language(C CXX ASM)
 
@@ -237,7 +247,6 @@ else() # GCC assumed
   endif()
 endif()
 
-zephyr_cc_option_ifdef(CONFIG_DEBUG_SECTION_MISMATCH -fno-inline-functions-called-once)
 zephyr_cc_option_ifdef(CONFIG_STACK_USAGE            -fstack-usage)
 
 zephyr_system_include_directories(${NOSTDINC})
@@ -1120,11 +1129,11 @@ add_subdirectory(cmake/flash)
 add_subdirectory(cmake/usage)
 add_subdirectory(cmake/reports)
 
-if(CONFIG_ASSERT)
+if(CONFIG_ASSERT AND (NOT CONFIG_FORCE_NO_ASSERT))
   message(WARNING "
       ------------------------------------------------------------
       --- WARNING:  __ASSERT() statements are globally ENABLED ---
-      --- The kernel will run more slowly and uses more memory ---
+      --- The kernel will run more slowly and use more memory  ---
       ------------------------------------------------------------"
 )
 endif()

@@ -9,11 +9,18 @@ if SOC_MKW41Z4
 
 config SOC
 	string
-	default mkw41z4
+	default "mkw41z4"
 
 config NUM_IRQS
 	int
 	default 32
+
+if RTC
+
+config RTC_MCUX
+	def_bool y
+
+endif # RTC
 
 if ADC
 
@@ -67,9 +74,6 @@ endif # SPI
 if ENTROPY_GENERATOR
 
 config ENTROPY_MCUX_TRNG
-	def_bool y
-
-config XOROSHIRO_RANDOM_GENERATOR
 	def_bool y
 
 endif # ENTROPY_GENERATOR

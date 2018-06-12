@@ -56,11 +56,13 @@
 #include <logging/sys_log.h>
 
 /*
- * USB LL API provides the EP_TYPE_* defines. STM32Cube does
- * not provide USB LL API for STM32F0 and STM32F3 families.
+ * USB LL API provides the EP_TYPE_* defines. STM32Cube does not
+ * provide USB LL API for STM32F0, STM32F3 and STM32L0 families.
  * Map EP_TYPE_* defines to PCD_EP_TYPE_* defines
  */
-#if defined(CONFIG_SOC_SERIES_STM32F3X) || defined(CONFIG_SOC_SERIES_STM32F0X)
+#if defined(CONFIG_SOC_SERIES_STM32F3X) || \
+	defined(CONFIG_SOC_SERIES_STM32F0X) || \
+	defined(CONFIG_SOC_SERIES_STM32L0X)
 #define EP_TYPE_CTRL PCD_EP_TYPE_CTRL
 #define EP_TYPE_ISOC PCD_EP_TYPE_ISOC
 #define EP_TYPE_BULK PCD_EP_TYPE_BULK
@@ -217,6 +219,23 @@ static int usb_dc_stm32_clock_enable(void)
 	 * STM32F030x4/x6/x8/xC and STM32F070x6/xB.
 	 */
 #if defined(RCC_HSI48_SUPPORT)
+
+	/*
+	 * In STM32L0 series, HSI48 requires VREFINT and its buffer
+	 * with 48 MHz RC to be enabled.
+	 * See ENREF_HSI48 in referenc maual RM0367 section10.2.3:
+	 * "Reference control and status register (SYSCFG_CFGR3)"
+	 */
+#ifdef CONFIG_SOC_SERIES_STM32L0X
+	if (LL_APB2_GRP1_IsEnabledClock(LL_APB2_GRP1_PERIPH_SYSCFG)) {
+		LL_SYSCFG_VREFINT_EnableHSI48();
+	} else {
+		SYS_LOG_ERR("System Configuration Controller clock is "
+			    "disabled. Unable to enable VREFINT which "
+			    "is required by HSI48.");
+	}
+#endif /* CONFIG_SOC_SERIES_STM32L0X */
+
 	LL_RCC_HSI48_Enable();
 	while (!LL_RCC_HSI48_IsReady()) {
 		/* Wait for HSI48 to become ready */
@@ -317,7 +336,12 @@ int usb_dc_attach(void)
 	 * pair PA11/12 mapped instead of PA9/10 (e.g. stm32f070x6)
 	 */
 #if defined(CONFIG_SOC_SERIES_STM32F0X) && defined(SYSCFG_CFGR1_PA11_PA12_RMP)
-	LL_SYSCFG_EnablePinRemap();
+	if (LL_APB1_GRP2_IsEnabledClock(LL_APB1_GRP2_PERIPH_SYSCFG)) {
+		LL_SYSCFG_EnablePinRemap();
+	} else {
+		SYS_LOG_ERR("System Configuration Controller clock is "
+			    "disable. Unable to enable pin remapping."
+	}
 #endif
 
 	ret = usb_dc_stm32_clock_enable();
@@ -336,7 +360,7 @@ int usb_dc_attach(void)
 	 * USB can function. Refer to section 5.1.3 in DM00083560 or
 	 * DM00310109.
 	 */
-#ifdef PWR_CR2_PVME1
+#ifdef PWR_CR2_USV
 	if (LL_APB1_GRP1_IsEnabledClock(LL_APB1_GRP1_PERIPH_PWR)) {
 		LL_PWR_EnableVddUSB();
 	} else {
@@ -344,7 +368,7 @@ int usb_dc_attach(void)
 		LL_PWR_EnableVddUSB();
 		LL_APB1_GRP1_DisableClock(LL_APB1_GRP1_PERIPH_PWR);
 	}
-#endif /* PWR_CR2_PVME1 */
+#endif /* PWR_CR2_USV */
 
 	return 0;
 }

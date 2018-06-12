@@ -238,7 +238,7 @@ void kobject_user_test7(void *p1, void *p2, void *p3)
 	USERSPACE_BARRIER;
 
 	k_sem_give(&kobject_sem);
-	k_object_access_revoke(&kobject_sem, k_current_get());
+	k_object_release(&kobject_sem);
 
 	valid_fault = true;
 	USERSPACE_BARRIER;
@@ -247,7 +247,7 @@ void kobject_user_test7(void *p1, void *p2, void *p3)
 }
 
 /* Test revoke permission of a k object from userspace. */
-void test_kobject_revoke_access_from_user(void *p1, void *p2, void *p3)
+void test_kobject_release_from_user(void *p1, void *p2, void *p3)
 {
 	k_thread_access_grant(k_current_get(),
 			      &kobject_sem, NULL);
@@ -624,7 +624,7 @@ void kobject_test_user_1_18(void *p1, void *p2, void *p3)
 
 	k_thread_create(&kobject_test_reuse_4_tid,
 			kobject_stack_2,
-			(KOBJECT_STACK_SIZE * 5),
+			K_THREAD_STACK_SIZEOF(kobject_stack_2) + 1,
 			kobject_test_user_2_18,
 			NULL, NULL, NULL,
 			0, K_USER, K_NO_WAIT);

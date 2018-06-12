@@ -38,6 +38,7 @@
 
 #include "conn_internal.h"
 #include "l2cap_internal.h"
+#include "gatt_internal.h"
 #include "smp.h"
 #include "crypto.h"
 #include "settings.h"
@@ -574,6 +575,14 @@ static int hci_le_create_conn(const struct bt_conn *conn)
 	return bt_hci_cmd_send_sync(BT_HCI_OP_LE_CREATE_CONN, buf, NULL);
 }
 
+static void hci_stack_dump(const struct k_thread *thread, void *user_data)
+{
+#if defined(CONFIG_THREAD_STACK_INFO)
+	stack_analyze((char *)user_data, (char *)thread->stack_info.start,
+						thread->stack_info.size);
+#endif
+}
+
 static void hci_disconn_complete(struct net_buf *buf)
 {
 	struct bt_hci_evt_disconn_complete *evt = (void *)buf->data;
@@ -596,7 +605,7 @@ static void hci_disconn_complete(struct net_buf *buf)
 	conn->err = evt->reason;
 
 	/* Check stacks usage (no-ops if not enabled) */
-	k_call_stacks_analyze();
+	k_thread_foreach(hci_stack_dump, "HCI");
 #if !defined(CONFIG_BT_RECV_IS_RX_THREAD)
 	STACK_ANALYZE("rx stack", rx_thread_stack);
 #endif
@@ -1313,6 +1322,10 @@ int bt_unpair(const bt_addr_le_t *addr)
 		if (keys) {
 			bt_keys_clear(keys);
 		}
+	}
+
+	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
+		bt_gatt_clear_ccc(addr);
 	}
 
 	return 0;

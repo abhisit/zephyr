@@ -14,12 +14,9 @@ config SOC_FAMILY_STM32
 
 if SOC_FAMILY_STM32
 
-config BUILD_OUTPUT_HEX
-        default y
-
 config SOC_FAMILY
 	string
-	default st_stm32
+	default "st_stm32"
 
 config STM32_ARM_MPU_ENABLE
 	bool "Enable MPU on STM32"

@@ -4,24 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
 /**
- * @addtogroup t_workq
+ * @brief Workqueue Tests
+ * @defgroup kernel_workqueue_tests Workqueue
+ * @ingroup all_tests
  * @{
- * @defgroup t_workq_api test_workq_api
- * @brief TestPurpose: verify work queue API functionalities
- * - API coverage
- *   -# k_work_init
- *   -# k_delayed_work_init
- *   -# k_work_q_start
- *   -# k_work_submit_to_queue
- *   -# k_work_submit
- *   -# k_delayed_work_submit_to_queue
- *   -# k_delayed_work_submit
- *   -# k_delayed_work_cancel
- *   -# k_delayed_work_remaining_get
- *   -# k_work_pending
- *   -#
  * @}
  */
 
@@ -203,6 +190,11 @@ static void tdelayed_work_cancel(void *data)
 }
 
 /*test cases*/
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_work_q_start()
+ */
 void test_workq_start_before_submit(void)
 {
 	k_sem_init(&sync_sema, 0, NUM_OF_WORK);
@@ -210,6 +202,11 @@ void test_workq_start_before_submit(void)
 		       CONFIG_MAIN_THREAD_PRIORITY);
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_work_init(), k_work_pending(), k_work_submit_to_queue(), k_work_submit()
+ */
 void test_work_submit_to_queue_thread(void)
 {
 	k_sem_reset(&sync_sema);
@@ -219,6 +216,11 @@ void test_work_submit_to_queue_thread(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_init(), k_delayed_work_submit_to_queue(), k_delayed_work_submit()
+ */
 void test_work_submit_to_multipleq(void)
 {
 	k_sem_reset(&sync_sema);
@@ -228,6 +230,11 @@ void test_work_submit_to_multipleq(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_queue_remove(), k_delayed_work_init(), k_delayed_work_submit_to_queue()
+ */
 void test_work_resubmit_to_queue(void)
 {
 	k_sem_reset(&sync_sema);
@@ -235,6 +242,11 @@ void test_work_resubmit_to_queue(void)
 	k_sem_take(&sync_sema, K_FOREVER);
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_work_init(), k_work_pending(), k_work_submit_to_queue(), k_work_submit()
+ */
 void test_work_submit_to_queue_isr(void)
 {
 	k_sem_reset(&sync_sema);
@@ -244,6 +256,11 @@ void test_work_submit_to_queue_isr(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_work_init(), k_work_pending(), k_work_submit_to_queue(), k_work_submit()
+ */
 void test_work_submit_thread(void)
 {
 	k_sem_reset(&sync_sema);
@@ -253,6 +270,11 @@ void test_work_submit_thread(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_work_init(), k_work_pending(), k_work_submit_to_queue(), k_work_submit()
+ */
 void test_work_submit_isr(void)
 {
 	k_sem_reset(&sync_sema);
@@ -262,6 +284,13 @@ void test_work_submit_isr(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_init(), k_work_pending(),
+ * k_delayed_work_remaining_get(), k_delayed_work_submit_to_queue(),
+ * k_delayed_work_submit()
+ */
 void test_delayed_work_submit_to_queue_thread(void)
 {
 	k_sem_reset(&sync_sema);
@@ -271,6 +300,13 @@ void test_delayed_work_submit_to_queue_thread(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_init(), k_work_pending(),
+ * k_delayed_work_remaining_get(), k_delayed_work_submit_to_queue(),
+ * k_delayed_work_submit()
+ */
 void test_delayed_work_submit_to_queue_isr(void)
 {
 	k_sem_reset(&sync_sema);
@@ -280,6 +316,13 @@ void test_delayed_work_submit_to_queue_isr(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_init(), k_work_pending(),
+ * k_delayed_work_remaining_get(), k_delayed_work_submit_to_queue(),
+ * k_delayed_work_submit()
+ */
 void test_delayed_work_submit_thread(void)
 {
 	k_sem_reset(&sync_sema);
@@ -289,6 +332,13 @@ void test_delayed_work_submit_thread(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_init(), k_work_pending(),
+ * k_delayed_work_remaining_get(), k_delayed_work_submit_to_queue(),
+ * k_delayed_work_submit()
+ */
 void test_delayed_work_submit_isr(void)
 {
 	k_sem_reset(&sync_sema);
@@ -298,6 +348,11 @@ void test_delayed_work_submit_isr(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_cancel(), k_work_pending()
+ */
 void test_delayed_work_cancel_from_queue_thread(void)
 {
 	k_sem_reset(&sync_sema);
@@ -308,6 +363,11 @@ void test_delayed_work_cancel_from_queue_thread(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_cancel(), k_work_pending()
+ */
 void test_delayed_work_cancel_from_queue_isr(void)
 {
 	k_sem_reset(&sync_sema);
@@ -318,6 +378,11 @@ void test_delayed_work_cancel_from_queue_isr(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_cancel(), k_work_pending()
+ */
 void test_delayed_work_cancel_thread(void)
 {
 	k_sem_reset(&sync_sema);
@@ -328,6 +393,11 @@ void test_delayed_work_cancel_thread(void)
 	}
 }
 
+/**
+ * @ingroup kernel_workqueue_tests
+ *
+ * @see k_delayed_work_cancel(), k_work_pending()
+ */
 void test_delayed_work_cancel_isr(void)
 {
 	k_sem_reset(&sync_sema);

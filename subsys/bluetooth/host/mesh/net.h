@@ -17,18 +17,11 @@
 #define BT_MESH_IV_UPDATE(flags)   ((flags >> 1) & 0x01)
 #define BT_MESH_KEY_REFRESH(flags) (flags & 0x01)
 
-/* Special time-stamp to indicate that we don't know when the last IV
- * Update happened.
- */
-#define BT_MESH_NET_IVU_UNKNOWN -1
-
-#if defined(CONFIG_BT_MESH_IV_UPDATE_TEST)
-/* Small test timeout for IV Update Procedure testing */
-#define BT_MESH_NET_IVU_TIMEOUT  K_SECONDS(120)
-#else
-/* Maximum time to stay in IV Update mode (96 < time < 144) */
-#define BT_MESH_NET_IVU_TIMEOUT  K_HOURS(120)
-#endif /* CONFIG_BT_MESH_IV_UPDATE_TEST */
+/* How many hours in between updating IVU duration */
+#define BT_MESH_IVU_MIN_HOURS      96
+#define BT_MESH_IVU_HOURS          (BT_MESH_IVU_MIN_HOURS /     \
+				    CONFIG_BT_MESH_IVU_DIVIDER)
+#define BT_MESH_IVU_TIMEOUT        K_HOURS(BT_MESH_IVU_HOURS)
 
 struct bt_mesh_app_key {
 	u16_t net_idx;
@@ -197,6 +190,21 @@ struct bt_mesh_lpn {
 	ATOMIC_DEFINE(to_remove, LPN_GROUPS);
 };
 
+/* bt_mesh_net.flags, mainly used for pending storage actions */
+enum {
+	BT_MESH_RPL_PENDING,
+	BT_MESH_KEYS_PENDING,
+	BT_MESH_NET_PENDING,
+	BT_MESH_IV_PENDING,
+	BT_MESH_SEQ_PENDING,
+	BT_MESH_HB_PUB_PENDING,
+	BT_MESH_CFG_PENDING,
+	BT_MESH_MOD_PENDING,
+
+	/* Don't touch - intentionally last */
+	BT_MESH_FLAG_COUNT,
+};
+
 struct bt_mesh_net {
 	u32_t iv_index;          /* Current IV Index */
 	u32_t seq:24,            /* Next outgoing sequence number */
@@ -206,7 +214,7 @@ struct bt_mesh_net {
 	      pending_update:1,  /* Update blocked by SDU in progress */
 	      valid:1;           /* 0 if unused */
 
-	s64_t last_update;       /* Time since last IV Update change */
+	ATOMIC_DEFINE(flags, BT_MESH_FLAG_COUNT);
 
 	/* Local network interface */
 	struct k_work local_work;
@@ -221,8 +229,11 @@ struct bt_mesh_net {
 	struct bt_mesh_lpn lpn;  /* Low Power Node state */
 #endif
 
-	/* Timer to transition IV Update in Progress state */
-	struct k_delayed_work ivu_complete;
+	/* Number of hours in current IV Update state */
+	u8_t  ivu_duration;
+
+	/* Timer to track duration in current IV Update state */
+	struct k_delayed_work ivu_timer;
 
 	u8_t dev_key[16];
 
@@ -246,7 +257,6 @@ struct bt_mesh_net_rx {
 	struct bt_mesh_subnet *sub;
 	struct bt_mesh_msg_ctx ctx;
 	u32_t  seq;            /* Sequence Number */
-	u16_t  dst;            /* Destination address */
 	u8_t   old_iv:1,       /* iv_index - 1 was used */
 	       new_key:1,      /* Data was encrypted with updated key */
 	       friend_cred:1,  /* Data was encrypted with friend cred */

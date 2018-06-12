@@ -146,11 +146,11 @@ configure the Zephyr build system:
   application's :file:`CMakeLists.txt` file, or in the ``cmake`` command line.
 
 * :makevar:`CONF_FILE`: Indicates the name of one or more configuration
-  fragment files.  Multiple filenames are separated by a single space.  Each
-  file includes Kconfig configuration values that override the default
-  configuration values.  Like :makevar:`BOARD`, this can also be defined in the
-  environment, in your application's :file:`CMakeLists.txt` file, or in the
-  ``cmake`` command line.
+  fragment files.  Multiple filenames can either be separated by a single space
+  or a single semicolon.  Each file includes Kconfig configuration values that
+  override the default configuration values.  Like :makevar:`BOARD`, this can
+  also be defined in the environment, in your application's
+  :file:`CMakeLists.txt` file, or in the ``cmake`` command line.
 
 * :makevar:`DTC_OVERLAY_FILE`: Indicates the name of one or more Device Tree
   overlay files.  Each file includes Device Tree values that
@@ -402,11 +402,11 @@ where the ``boards`` directory hosts the board you are building for:
 
    .
    ├── boards
-   │   └── x86
-   │       └── my_custom_board
-   │           ├── doc
-   │           │   └── img
-   │           └── support
+   │   └── x86
+   │       └── my_custom_board
+   │           ├── doc
+   │           │   └── img
+   │           └── support
    └── src
 
 
@@ -763,7 +763,15 @@ Make sure to follow these steps in order.
    the usual :file:`prj.conf` (or :file:`prj_YOUR_BOARD.conf`, where
    ``YOUR_BOARD`` is a board name), add lines setting the
    :makevar:`CONF_FILE` variable to these files appropriately.
-   If multiple filenames are given, separate them by a single space.
+   If multiple filenames are given, separate them by a single space or
+   semicolon.  CMake lists can be used to build up configuration fragment
+   files in a modular way when you want to avoid setting :makevar:`CONF_FILE`
+   in a single place. For example:
+
+   .. code-block:: cmake
+
+     set(CONF_FILE "fragment_file1.conf")
+     list(APPEND CONF_FILE "fragment_file2.conf")
 
    More details are available below in :ref:`application_kconfig`.
 
@@ -795,9 +803,15 @@ Make sure to follow these steps in order.
 
    .. literalinclude:: application-kconfig.include
 
-   .. important::
+   .. note::
 
-      The indented lines above must use tabs, not spaces.
+       Environment variables in ``source`` statements are expanded directly,
+       so you do not need to define a ``option env="ZEPHYR_BASE"`` Kconfig
+       "bounce" symbol. If you use such a symbol, it must have the same name as
+       the environment variable.
+
+       See the :ref:`kconfig_extensions_and_changes` section in the
+       :ref:`board_porting_guide` for more information.
 
 #. Now include the mandatory boilerplate that integrates the
    application with the Zephyr build system on a new line, **after any
@@ -885,6 +899,17 @@ For more information on Zephyr's Kconfig configuration scheme, see the
 
 For information on available kernel configuration options, including
 inter-dependencies between options, see the :ref:`configuration`.
+
+.. note::
+
+    Dependencies between options can also be viewed in the interactive
+    configuration interface, which is explained in the
+    :ref:`override_kernel_conf` section. It will have the most up-to-date
+    dependencies, and also shows which dependencies are currently unsatisfied.
+
+    To view the dependencies of an option in the configuration interface, jump
+    to it with :kbd:`/` and press :kbd:`?`. For each unsatisfied dependency,
+    jump to it in turn to check its dependencies.
 
 .. _application_set_conf:
 

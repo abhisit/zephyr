@@ -8,7 +8,7 @@
 if BOARD_OLIMEXINO_STM32
 
 config BOARD
-	default olimexino_stm32
+	default "olimexino_stm32"
 
 if UART_CONSOLE
 
@@ -43,18 +43,5 @@ config PWM_STM32_1
 	default y
 
 endif # PWM
-
-if USB_DC_STM32_DISCONN_ENABLE
-
-config USB_DC_STM32_DISCONN_GPIO_PORT_NAME
-	default "GPIOC"
-
-config USB_DC_STM32_DISCONN_PIN
-	default 12
-
-config USB_DC_STM32_DISCONN_PIN_LEVEL
-	default 0
-
-endif # USB_DC_STM32_DISCONN_ENABLE
 
 endif # BOARD_OLIMEXINO_STM32

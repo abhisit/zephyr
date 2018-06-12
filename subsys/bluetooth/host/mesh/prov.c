@@ -34,8 +34,7 @@
 #include "prov.h"
 
 /* 3 transmissions, 20ms interval */
-#define PROV_XMIT_COUNT        2
-#define PROV_XMIT_INT          20
+#define PROV_XMIT              BT_MESH_TRANSMIT(2, 20)
 
 #define AUTH_METHOD_NO_OOB     0x00
 #define AUTH_METHOD_STATIC     0x01
@@ -264,8 +263,7 @@ static struct net_buf *adv_buf_create(void)
 {
 	struct net_buf *buf;
 
-	buf = bt_mesh_adv_create(BT_MESH_ADV_PROV, PROV_XMIT_COUNT,
-				 PROV_XMIT_INT, BUF_TIMEOUT);
+	buf = bt_mesh_adv_create(BT_MESH_ADV_PROV, PROV_XMIT, BUF_TIMEOUT);
 	if (!buf) {
 		BT_ERR("Out of provisioning buffers");
 		return NULL;
@@ -1073,7 +1071,7 @@ static void prov_data(const u8_t *data)
 		identity_enable = false;
 	}
 
-	bt_mesh_provision(pdu, net_idx, flags, iv_index, 0, addr, dev_key);
+	bt_mesh_provision(pdu, net_idx, flags, iv_index, addr, dev_key);
 
 	/* After PB-GATT provisioning we should start advertising
 	 * using Node Identity.

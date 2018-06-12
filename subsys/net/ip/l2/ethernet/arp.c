@@ -21,7 +21,7 @@
 #include <net/arp.h>
 #include "net_private.h"
 
-#define NET_BUF_TIMEOUT MSEC(100)
+#define NET_BUF_TIMEOUT K_MSEC(100)
 
 static struct arp_entry arp_table[CONFIG_NET_ARP_TABLE_SIZE];
 
@@ -198,7 +198,6 @@ struct net_pkt *net_arp_prepare(struct net_pkt *pkt)
 {
 	struct arp_entry *entry, *free_entry = NULL, *non_pending = NULL;
 	struct ethernet_context *ctx;
-	struct net_buf *frag;
 	struct net_linkaddr *ll;
 	struct net_eth_hdr *hdr;
 	struct in_addr *addr;
@@ -221,10 +220,6 @@ struct net_pkt *net_arp_prepare(struct net_pkt *pkt)
 		if (!header) {
 			return NULL;
 		}
-
-		net_eth_fill_header(ctx, pkt, header, htons(NET_ETH_PTYPE_IP),
-				    net_pkt_ll_src(pkt)->addr,
-				    net_pkt_ll_dst(pkt)->addr);
 
 		net_pkt_frag_insert(pkt, header);
 
@@ -290,22 +285,9 @@ struct net_pkt *net_arp_prepare(struct net_pkt *pkt)
 		net_sprint_ll_addr(ll->addr, sizeof(struct net_eth_addr)),
 		net_sprint_ipv4_addr(&NET_IPV4_HDR(pkt)->src));
 
-	frag = pkt->frags;
-	while (frag) {
-		/* If there is no room for link layer header, then
-		 * just send the packet as is.
-		 */
-		if (!net_buf_headroom(frag)) {
-			frag = frag->frags;
-			continue;
-		}
-
-		hdr = net_eth_fill_header(ctx, pkt, frag,
-					  htons(NET_ETH_PTYPE_IP),
-					  ll->addr, entry->eth.addr);
-
-		frag = frag->frags;
-	}
+	net_eth_fill_header(ctx, pkt, pkt->frags,
+			    htons(NET_ETH_PTYPE_IP),
+			    ll->addr, entry->eth.addr);
 
 	return pkt;
 }
@@ -500,17 +482,21 @@ enum net_verdict net_arp_input(struct net_pkt *pkt)
 	return NET_OK;
 }
 
-void net_arp_clear_cache(void)
+void net_arp_clear_cache(struct net_if *iface)
 {
 	int i;
 
 	for (i = 0; i < CONFIG_NET_ARP_TABLE_SIZE; i++) {
+		if (iface && iface != arp_table[i].iface) {
+			continue;
+		}
+
 		if (arp_table[i].pending) {
 			net_pkt_unref(arp_table[i].pending);
 		}
-	}
 
-	memset(&arp_table, 0, sizeof(arp_table));
+		memset(&arp_table[i], 0, sizeof(struct arp_entry));
+	}
 }
 
 int net_arp_foreach(net_arp_cb_t cb, void *user_data)
@@ -532,5 +518,5 @@ int net_arp_foreach(net_arp_cb_t cb, void *user_data)
 
 void net_arp_init(void)
 {
-	net_arp_clear_cache();
+	net_arp_clear_cache(NULL);
 }
