@@ -48,11 +48,11 @@ static struct net_tcp tcp_context[NET_MAX_TCP_CONTEXT];
 
 static struct tcp_backlog_entry {
 	struct net_tcp *tcp;
-	struct sockaddr remote;
 	u32_t send_seq;
 	u32_t send_ack;
-	u16_t send_mss;
 	struct k_delayed_work ack_timer;
+	struct sockaddr remote;
+	u16_t send_mss;
 } tcp_backlog[CONFIG_NET_TCP_BACKLOG_SIZE];
 
 #if defined(CONFIG_NET_TCP_ACK_TIMEOUT)
@@ -361,12 +361,13 @@ static int finalize_segment(struct net_context *context, struct net_pkt *pkt)
 {
 #if defined(CONFIG_NET_IPV4)
 	if (net_pkt_family(pkt) == AF_INET) {
-		return net_ipv4_finalize(context, pkt);
+		net_ipv4_finalize(pkt, net_context_get_ip_proto(context));
 	} else
 #endif
 #if defined(CONFIG_NET_IPV6)
 	if (net_pkt_family(pkt) == AF_INET6) {
-		return net_ipv6_finalize(context, pkt);
+		return net_ipv6_finalize(pkt,
+					 net_context_get_ip_proto(context));
 	}
 #endif
 	{
@@ -410,7 +411,7 @@ static int prepare_segment(struct net_tcp *tcp,
 
 #if defined(CONFIG_NET_IPV4)
 	if (net_pkt_family(pkt) == AF_INET) {
-		net_ipv4_create(context, pkt,
+		net_context_create_ipv4(context, pkt,
 				net_sin_ptr(segment->src_addr)->sin_addr,
 				&(net_sin(segment->dst_addr)->sin_addr));
 		dst_port = net_sin(segment->dst_addr)->sin_port;
@@ -421,7 +422,7 @@ static int prepare_segment(struct net_tcp *tcp,
 #endif
 #if defined(CONFIG_NET_IPV6)
 	if (net_pkt_family(pkt) == AF_INET6) {
-		net_ipv6_create(tcp->context, pkt,
+		net_context_create_ipv6(tcp->context, pkt,
 				net_sin6_ptr(segment->src_addr)->sin6_addr,
 				&(net_sin6(segment->dst_addr)->sin6_addr));
 		dst_port = net_sin6(segment->dst_addr)->sin6_port;
@@ -449,7 +450,7 @@ static int prepare_segment(struct net_tcp *tcp,
 		if (pkt_allocated) {
 			net_pkt_unref(pkt);
 		} else {
-			pkt->frags = tail;
+			net_pkt_frag_add(pkt, tail);
 		}
 
 		return -ENOMEM;
@@ -1830,8 +1831,14 @@ static inline int send_syn_segment(struct net_context *context,
 {
 	struct net_pkt *pkt = NULL;
 	int ret;
+	u8_t options[NET_TCP_MAX_OPT_SIZE];
+	u8_t optionlen = 0;
 
-	ret = net_tcp_prepare_segment(context->tcp, flags, NULL, 0,
+	if (flags == NET_TCP_SYN) {
+		net_tcp_set_syn_opt(context->tcp, options, &optionlen);
+	}
+
+	ret = net_tcp_prepare_segment(context->tcp, flags, options, optionlen,
 				      local, remote, &pkt);
 	if (ret) {
 		return ret;
@@ -2349,7 +2356,7 @@ NET_CONN_CB(tcp_syn_rcvd)
 	 * See RFC 793 chapter 3.4 "Reset Processing" and RFC 793, page 65
 	 * for more details.
 	 */
-	if (NET_TCP_FLAGS(tcp_hdr) == NET_TCP_RST) {
+	if (NET_TCP_FLAGS(tcp_hdr) & NET_TCP_RST) {
 
 		if (tcp_backlog_rst(pkt) < 0) {
 			net_stats_update_tcp_seg_rsterr(net_pkt_iface(pkt));

@@ -674,9 +674,8 @@ Create a Debugger Configuration
 RTOS Awareness
 ==============
 
-Experimental support for Zephyr RTOS awareness is implemented in `pyOCD PR
-#333`_. It is compatible with GDB PyOCD Debugging in Eclipse, but you must
-download this pull request and build pyOCD from source. You must also enable
+Support for Zephyr RTOS awareness is implemented in `pyOCD v0.11.0`_ and later.
+It is compatible with GDB PyOCD Debugging in Eclipse, but you must enable
 CONFIG_OPENOCD_SUPPORT=y in your application.
 
 CMake Details
@@ -798,19 +797,18 @@ Make sure to follow these steps in order.
 
       set(KCONFIG_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/Kconfig)
 
-   Make sure to include the following lines in your :file:`Kconfig` file before
-   any application-specific configuration options:
+   Structure your :file:`Kconfig` file like this:
 
    .. literalinclude:: application-kconfig.include
 
    .. note::
 
        Environment variables in ``source`` statements are expanded directly,
-       so you do not need to define a ``option env="ZEPHYR_BASE"`` Kconfig
+       so you do not need to define an ``option env="ZEPHYR_BASE"`` Kconfig
        "bounce" symbol. If you use such a symbol, it must have the same name as
        the environment variable.
 
-       See the :ref:`kconfig_extensions_and_changes` section in the
+       See the :ref:`kconfig_extensions` section in the
        :ref:`board_porting_guide` for more information.
 
 #. Now include the mandatory boilerplate that integrates the
@@ -840,6 +838,19 @@ Below is a simple example :file:`CMakeList.txt`:
 
    target_sources(app PRIVATE src/main.c)
 
+CMakeCache.txt
+==============
+
+CMake uses a CMakeCache.txt file as persistent key/value string
+storage used to cache values between runs, including compile and build
+options and paths to library dependencies. This cache file is created
+when CMake is run in an empty build folder.
+
+For more details about the CMakeCache.txt file see the official CMake
+documentation `runningcmake`_ .
+
+.. _runningcmake: http://cmake.org/runningcmake/
+
 .. _application_configuration:
 
 Application Configuration
@@ -851,13 +862,15 @@ Kconfig Configuration
 =====================
 
 The initial configuration for an application is produced by merging
-configuration settings from two sources:
+configuration settings from three sources:
 
 1. A :makevar:`BOARD`-specific configuration file, stored in
    :file:`boards/ARCHITECTURE/BOARD/BOARD_defconfig` in the Zephyr base
    directory.
 
-2. One or more application-specific configuration files.
+2. Any CMakeCache entries entries that are prefixed with :makevar:`CONFIG_`.
+
+3. One or more application-specific configuration files.
 
 The application-specific configuration file(s) can be specified in any of the
 following ways. The simplest option is to just have a single :file:`prj.conf`
@@ -879,12 +892,8 @@ file.
 3. Otherwise, if a file :file:`prj.conf` exists in the application directory,
    the settings in it are used.
 
-4. Otherwise, there are no application-specific settings, and just the settings
-   in the :makevar:`BOARD`-specific configuration are used.
-
-Configuration settings that are specified in neither the :makevar:`BOARD`
-configuration file nor in the application configuration file(s) fall back on
-their default value, as given in the :file:`Kconfig` files.
+Configuration settings that have not been specified fall back on their
+default value, as given in the :file:`Kconfig` files.
 
 The merged configuration is saved in :file:`zephyr/.config` in the build
 directory.
@@ -1082,7 +1091,9 @@ Device Tree Overlays
 
 As described in :ref:`device-tree`, Zephyr uses Device Tree to
 describe the hardware it runs on. This section describes how you can
-modify an application build's device tree using overlay files.
+modify an application build's device tree using overlay files. For additional
+information regarding the relationship between Device Tree and Kconfig see
+:ref:`dt_vs_kconfig`.
 
 Overlay files, which customarily have the :file:`.overlay` extension,
 contain device tree fragments which add to or modify the device tree
@@ -1178,4 +1189,4 @@ project that demonstrates some of these features.
 
 .. _Eclipse IDE for C/C++ Developers: https://www.eclipse.org/downloads/packages/eclipse-ide-cc-developers/oxygen2
 .. _GNU MCU Eclipse plug-ins: https://gnu-mcu-eclipse.github.io/plugins/install/
-.. _pyOCD PR #333: https://github.com/mbedmicro/pyOCD/pull/333
+.. _pyOCD v0.11.0: https://github.com/mbedmicro/pyOCD/releases/tag/v0.11.0

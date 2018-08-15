@@ -125,7 +125,7 @@ static void my_debug(void *ctx, int level,
 	mbedtls_printf("%s:%04d: |%d| %s", basename, line, level, str);
 }
 
-void dtls_timing_set_delay(void *data, u32_t int_ms, u32_t fin_ms)
+void dtls_timing_set_delay(void *data, uint32_t int_ms, uint32_t fin_ms)
 {
 	struct dtls_timing_context *ctx = (struct dtls_timing_context *)data;
 
@@ -412,12 +412,12 @@ static struct k_thread thread_data;
 
 static inline int init_app(void)
 {
-#if defined(CONFIG_NET_APP_MY_IPV6_ADDR)
+#if defined(CONFIG_NET_CONFIG_MY_IPV6_ADDR)
 	if (net_addr_pton(AF_INET6,
-			  CONFIG_NET_APP_MY_IPV6_ADDR,
+			  CONFIG_NET_CONFIG_MY_IPV6_ADDR,
 			  (struct sockaddr *)&client_addr) < 0) {
 		mbedtls_printf("Invalid IPv6 address %s",
-			       CONFIG_NET_APP_MY_IPV6_ADDR);
+			       CONFIG_NET_CONFIG_MY_IPV6_ADDR);
 	}
 #endif
 	if (!net_if_ipv6_addr_add(net_if_get_default(), &client_addr,

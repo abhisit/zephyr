@@ -12,6 +12,8 @@ phandles = {}
 aliases = defaultdict(list)
 chosen = {}
 reduced = {}
+defs = {}
+structs = {}
 
 regs_config = {
     'zephyr,flash' : 'CONFIG_FLASH',
@@ -29,10 +31,11 @@ name_config = {
 
 
 def convert_string_to_label(s):
-    # Transmute ,-@ to _
+    # Transmute ,-@/ to _
     s = s.replace("-", "_")
     s = s.replace(",", "_")
     s = s.replace("@", "_")
+    s = s.replace("/", "_")
     # Uppercase the string
     s = s.upper()
     return s
@@ -66,6 +69,10 @@ def get_aliases(root):
             for k, v in root['children']['aliases']['props'].items():
                 aliases[v].append(k)
 
+    # Treat alternate names as aliases
+    for k in reduced.keys():
+        if reduced[k].get('alt_name', None) is not None:
+            aliases[k].append(reduced[k]['alt_name'])
 
 def get_compat(node_address):
     compat = None
@@ -113,7 +120,7 @@ def get_phandles(root, name, handles):
                 get_phandles(v, name + k, handles)
 
 
-def insert_defs(node_address, defs, new_defs, new_aliases):
+def insert_defs(node_address, new_defs, new_aliases):
     if node_address in defs:
         if 'aliases' in defs[node_address]:
             defs[node_address]['aliases'].update(new_aliases)
@@ -155,7 +162,8 @@ def get_reduced(nodes, path):
 def get_node_label(node_compat, node_address):
     def_label = convert_string_to_label(node_compat)
     if '@' in node_address:
-        def_label += '_' + node_address.split('@')[-1].upper()
+        def_label += '_' + \
+                convert_string_to_label(node_address.split('@')[-1])
     else:
         def_label += convert_string_to_label(node_address)
 

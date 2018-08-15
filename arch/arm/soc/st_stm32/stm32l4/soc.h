@@ -22,14 +22,17 @@
 #ifndef _ASMLANGUAGE
 
 #include <autoconf.h>
-#include <device.h>
 #include <stm32l4xx.h>
+
+/* ARM CMSIS definitions must be included before kernel_includes.h.
+ * Therefore, it is essential to include kernel_includes.h after including
+ * core SOC-specific headers.
+ */
+#include <kernel_includes.h>
 
 #define GPIO_REG_SIZE         0x400
 /* base address for where GPIO registers start */
 #define GPIO_PORTS_BASE       (GPIOA_BASE)
-
-#include "soc_irq.h"
 
 #ifdef CONFIG_SERIAL_HAS_DRIVER
 #include <stm32l4xx_ll_usart.h>

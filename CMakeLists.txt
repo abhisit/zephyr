@@ -66,7 +66,7 @@ zephyr_compile_definitions(
   __ZEPHYR__=1
 )
 
-if(NOT CONFIG_COVERAGE)
+if(NOT CONFIG_NO_OPTIMIZATIONS)
 zephyr_compile_definitions(
   _FORTIFY_SOURCE=2
 )
@@ -91,11 +91,14 @@ endif()
 set_ifndef(OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG "-O0")
 set_ifndef(OPTIMIZE_FOR_DEBUG_FLAG            "-Og")
 set_ifndef(OPTIMIZE_FOR_SIZE_FLAG             "-Os")
+set_ifndef(OPTIMIZE_FOR_SPEED_FLAG            "-O2")
 
 if(CONFIG_NO_OPTIMIZATIONS)
   set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_NO_OPTIMIZATIONS_FLAG})
 elseif(CONFIG_DEBUG_OPTIMIZATIONS)
   set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_DEBUG_FLAG})
+elseif(CONFIG_SPEED_OPTIMIZATIONS)
+  set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_SPEED_FLAG})
 elseif(CONFIG_SIZE_OPTIMIZATIONS)
   set(OPTIMIZATION_FLAG ${OPTIMIZE_FOR_SIZE_FLAG}) # Default
 else()
@@ -117,8 +120,6 @@ zephyr_compile_options(
 )
 
 zephyr_compile_options(
-  $<$<COMPILE_LANGUAGE:C>:-std=c99>
-
   $<$<COMPILE_LANGUAGE:CXX>:-std=c++11>
   $<$<COMPILE_LANGUAGE:CXX>:-fcheck-new>
   $<$<COMPILE_LANGUAGE:CXX>:-ffunction-sections>
@@ -222,13 +223,22 @@ if(CONFIG_OVERRIDE_FRAME_POINTER_DEFAULT)
   endif()
 endif()
 
-zephyr_compile_options(${CONFIG_COMPILER_OPT})
+separate_arguments(CONFIG_COMPILER_OPT_AS_LIST UNIX_COMMAND ${CONFIG_COMPILER_OPT})
+zephyr_compile_options(${CONFIG_COMPILER_OPT_AS_LIST})
 
 # TODO: Include arch compiler options at this point.
 
-# TODO: This Clang check is broken
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
   zephyr_cc_option(
+    #FIXME: need to fix all of those
+    -Wno-sometimes-uninitialized
+    -Wno-shift-overflow
+    -Wno-missing-braces
+    -Wno-self-assign
+    -Wno-address-of-packed-member
+    -Wno-unused-function
+    -Wno-initializer-overrides
+    -Wno-section
     -Wno-unknown-warning-option
     -Wno-unused-variable
     -Wno-format-invalid-specifier
@@ -337,27 +347,103 @@ add_custom_target(syscall_macros_h_target DEPENDS ${syscall_macros_h})
 add_custom_command(                       OUTPUT  ${syscall_macros_h}
   COMMAND
   ${PYTHON_EXECUTABLE}
-  ${PROJECT_SOURCE_DIR}/scripts/gen_syscall_header.py
+  ${ZEPHYR_BASE}/scripts/gen_syscall_header.py
   > ${syscall_macros_h}
-  DEPENDS ${PROJECT_SOURCE_DIR}/scripts/gen_syscall_header.py
+  DEPENDS ${ZEPHYR_BASE}/scripts/gen_syscall_header.py
   )
 
-# This command is a hack to support commands that are always run. Any
-# target that depends on always_rebuild will always be rebuilt.
-add_custom_command(OUTPUT always_rebuild COMMAND cmake -E echo Building for board ${BOARD})
 
 set(syscall_list_h ${CMAKE_CURRENT_BINARY_DIR}/include/generated/syscall_list.h)
 set(syscalls_json  ${CMAKE_CURRENT_BINARY_DIR}/misc/generated/syscalls.json)
+
+# The syscalls subdirs txt file is constructed by python containing a list of folders to use for
+# dependency handling, including empty folders.
+# Windows:  The list is used to specify DIRECTORY list with CMAKE_CONFIGURE_DEPENDS attribute.
+# Other OS: The list will update whenever a file is added/removed/modified and ensure a re-build.
+set(syscalls_subdirs_txt ${CMAKE_CURRENT_BINARY_DIR}/misc/generated/syscalls_subdirs.txt)
+
+# As syscalls_subdirs_txt is updated whenever a file is modified, this file can not be used for
+# monitoring of added / removed folders. A trigger file is thus used for correct dependency
+# handling. The trigger file will update when a folder is added / removed.
+set(syscalls_subdirs_trigger ${CMAKE_CURRENT_BINARY_DIR}/misc/generated/syscalls_subdirs.trigger)
+
+if(NOT (${CMAKE_HOST_SYSTEM_NAME} STREQUAL Windows))
+  set(syscalls_links --create-links ${CMAKE_CURRENT_BINARY_DIR}/misc/generated/syscalls_links)
+endif()
+
+# When running CMake it must be ensured that all dependencies are correctly acquired.
+execute_process(
+  COMMAND
+  ${PYTHON_EXECUTABLE}
+  ${ZEPHYR_BASE}/scripts/subfolder_list.py
+  --directory        ${ZEPHYR_BASE}/include      # Walk this directory
+  --out-file         ${syscalls_subdirs_txt}     # Write file with discovered folder
+  --trigger          ${syscalls_subdirs_trigger} # Trigger file that is used for json generation
+  ${syscalls_links}                              # If defined, create symlinks for dependencies
+)
+file(STRINGS ${syscalls_subdirs_txt} PARSE_SYSCALLS_PATHS_DEPENDS)
+
+if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL Windows)
+  # On windows only adding/removing files or folders will be reflected in depends.
+  # Hence adding a file requires CMake to re-run to add this file to the file list.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PARSE_SYSCALLS_PATHS_DEPENDS})
+
+  # Also On Windows each header file must be monitored as file modifications are not reflected
+  # on directory level.
+  file(GLOB_RECURSE PARSE_SYSCALLS_HEADER_DEPENDS ${ZEPHYR_BASE}/include/*.h)
+else()
+  # The syscall parsing depends on the folders in order to detect add/removed/modified files.
+  # When a folder is removed, CMake will try to find a target that creates that dependency.
+  # This command sets up the target for CMake to find.
+  # Without this code, CMake will fail with the following error:
+  #   <folder> needed by '<target>', missing and no known rule to make it
+  # when a folder is removed.
+  add_custom_command(OUTPUT ${PARSE_SYSCALLS_PATHS_DEPENDS}
+    COMMAND ${CMAKE_COMMAND} -E echo ""
+    COMMENT "Preparing syscall dependency handling"
+  )
+
+  add_custom_command(
+    OUTPUT
+    ${syscalls_subdirs_trigger}
+    COMMAND
+    ${PYTHON_EXECUTABLE}
+    ${ZEPHYR_BASE}/scripts/subfolder_list.py
+    --directory        ${ZEPHYR_BASE}/include      # Walk this directory
+    --out-file         ${syscalls_subdirs_txt}     # Write file with discovered folder
+    --trigger          ${syscalls_subdirs_trigger} # Trigger file that is used for json generation
+    ${syscalls_links}                              # If defined, create symlinks for dependencies
+    DEPENDS ${PARSE_SYSCALLS_PATHS_DEPENDS}
+  )
+
+  # Ensure subdir file always exists when specifying CMake dependency.
+  if(NOT EXISTS ${syscalls_subdirs_txt})
+    file(WRITE ${syscalls_subdirs_txt} "")
+  endif()
+
+  # On other OS'es, modifying a file is reflected on the folder timestamp and hence detected
+  # when using depend on directory level.
+  # Thus CMake only needs to re-run when sub-directories are added / removed, which is indicated
+  # using a trigger file.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${syscalls_subdirs_txt})
+endif()
+
+# SYSCALL_INCLUDE_DIRECTORY will include the directories that needs to be
+# searched for syscall declarations if CONFIG_APPLICATION_DEFINED_SYSCALL is set
+if(CONFIG_APPLICATION_DEFINED_SYSCALL)
+  set(SYSCALL_INCLUDE_DIRECTORY --include ${APPLICATION_SOURCE_DIR})
+endif()
 
 add_custom_command(
   OUTPUT
   ${syscalls_json}
   COMMAND
   ${PYTHON_EXECUTABLE}
-  ${PROJECT_SOURCE_DIR}/scripts/parse_syscalls.py
-  --include          ${PROJECT_SOURCE_DIR}/include        # Read files from this dir
-  --json-file        ${syscalls_json}                     # Write this file
-  DEPENDS always_rebuild
+  ${ZEPHYR_BASE}/scripts/parse_syscalls.py
+   --include          ${ZEPHYR_BASE}/include        # Read files from this dir
+  ${SYSCALL_INCLUDE_DIRECTORY}
+  --json-file        ${syscalls_json}              # Write this file
+  DEPENDS ${syscalls_subdirs_trigger} ${PARSE_SYSCALLS_HEADER_DEPENDS}
   )
 
 add_custom_target(syscall_list_h_target DEPENDS                ${syscall_list_h})
@@ -365,11 +451,11 @@ add_custom_command(OUTPUT include/generated/syscall_dispatch.c ${syscall_list_h}
   # Also, some files are written to include/generated/syscalls/
   COMMAND
   ${PYTHON_EXECUTABLE}
-  ${PROJECT_SOURCE_DIR}/scripts/gen_syscalls.py
+  ${ZEPHYR_BASE}/scripts/gen_syscalls.py
   --json-file        ${syscalls_json}                     # Read this file
   --base-output      include/generated/syscalls           # Write to this dir
   --syscall-dispatch include/generated/syscall_dispatch.c # Write this file
-  > ${syscall_list_h}                                     # Write stdout to this file
+  --syscall-list     ${syscall_list_h}
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS ${syscalls_json}
   )
@@ -546,6 +632,9 @@ endif() # CONFIG_APPLICATION_MEMORY
 # Declare MPU userspace dependencies before the linker scripts to make
 # sure the order of dependencies are met
 if(CONFIG_CPU_HAS_MPU AND CONFIG_USERSPACE)
+	if(CONFIG_MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT AND CONFIG_APP_SHARED_MEM )
+    set(APP_SMEM_DEP app_smem_linker)
+  endif()
   if(CONFIG_MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT AND CONFIG_APPLICATION_MEMORY)
     set(ALIGN_SIZING_DEP app_sizing_prebuilt linker_app_sizing_script)
   endif()
@@ -611,6 +700,7 @@ add_custom_target(
   linker_script
   DEPENDS
   ${ALIGN_SIZING_DEP} ${PRIV_STACK_DEP}
+  ${APP_SMEM_DEP}
   linker.cmd
   offsets_h
   )
@@ -628,20 +718,15 @@ set_property(TARGET
   ${ZEPHYR_INCLUDE_DIRS}
   )
 
-get_property(E_KERNEL_ENTRY GLOBAL PROPERTY E_KERNEL_ENTRY)
-
 set(zephyr_lnk
   ${LINKERFLAGPREFIX},-Map=${PROJECT_BINARY_DIR}/${KERNEL_MAP_NAME}
   -u_OffsetAbsSyms
   -u_ConfigAbsSyms
-  ${E_KERNEL_ENTRY}
-  ${LINKERFLAGPREFIX},--start-group
   ${LINKERFLAGPREFIX},--whole-archive
   ${ZEPHYR_LIBS_PROPERTY}
   ${LINKERFLAGPREFIX},--no-whole-archive
   kernel
   ${OFFSETS_O_PATH}
-  ${LINKERFLAGPREFIX},--end-group
   ${LIB_INCLUDE_DIR}
   -L${PROJECT_BINARY_DIR}
   ${TOOLCHAIN_LIBS}
@@ -731,6 +816,7 @@ if(CONFIG_ARM AND CONFIG_USERSPACE)
   add_custom_command(
     OUTPUT ${PRIV_STACKS_OUTPUT_SRC}
     COMMAND
+    ${PYTHON_EXECUTABLE}
     ${PROCESS_PRIV_STACKS_GPERF}
     -i ${PRIV_STACKS_OUTPUT_SRC_PRE}
     -o ${PRIV_STACKS_OUTPUT_SRC}
@@ -844,6 +930,7 @@ if(CONFIG_USERSPACE)
   add_custom_command(
     OUTPUT ${OUTPUT_SRC}
     COMMAND
+    ${PYTHON_EXECUTABLE}
     ${PROCESS_GPERF}
     -i ${OUTPUT_SRC_PRE}
     -o ${OUTPUT_SRC}
@@ -912,11 +999,45 @@ get_property(GKSF GLOBAL PROPERTY GENERATED_KERNEL_SOURCE_FILES)
 get_property(TOPT GLOBAL PROPERTY TOPT)
 set_ifndef(  TOPT -T)
 
+get_property(CSTD GLOBAL PROPERTY CSTD)
+set_ifndef(CSTD c99)
+
+zephyr_compile_options(
+  $<$<COMPILE_LANGUAGE:C>:-std=${CSTD}>
+)
+
 configure_file(
      $ENV{ZEPHYR_BASE}/include/arch/arm/cortex_m/scripts/app_data_alignment.ld
      ${PROJECT_BINARY_DIR}/include/generated/app_data_alignment.ld)
 
+configure_file(
+     $ENV{ZEPHYR_BASE}/include/arch/arm/cortex_m/scripts/app_smem.ld
+     ${PROJECT_BINARY_DIR}/include/generated/app_smem.ld)
+
 if(CONFIG_CPU_HAS_MPU AND CONFIG_USERSPACE)
+
+    if(CONFIG_MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT AND CONFIG_APP_SHARED_MEM)
+        set(APP_SMEM_LD "${PROJECT_BINARY_DIR}/include/generated/app_smem.ld")
+        set(OBJ_FILE_DIR "${PROJECT_BINARY_DIR}/../")
+
+        add_custom_target(
+          ${APP_SMEM_DEP} ALL
+          DEPENDS app
+          DEPENDS ${PRIV_STACK_DEP}
+         )
+
+        add_custom_command(
+          TARGET ${APP_SMEM_DEP}
+          COMMAND ${PYTHON_EXECUTABLE}
+          ${ZEPHYR_BASE}/scripts/gen_app_partitions.py
+          -d ${OBJ_FILE_DIR}
+          -o ${APP_SMEM_LD}
+          $<$<BOOL:${CMAKE_VERBOSE_MAKEFILE}>:--verbose>
+          WORKING_DIRECTORY ${PROJECT_BINARY_DIR}/
+          COMMENT "Generating power of 2 aligned app_smem linker section"
+         )
+  endif()
+
 
   if(CONFIG_MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT AND CONFIG_APPLICATION_MEMORY)
 
@@ -946,7 +1067,7 @@ if(CONFIG_CPU_HAS_MPU AND CONFIG_USERSPACE)
     add_executable(       app_sizing_prebuilt misc/empty_file.c)
     target_link_libraries(app_sizing_prebuilt ${TOPT} ${PROJECT_BINARY_DIR}/linker_app_sizing.cmd ${zephyr_lnk})
     set_property(TARGET   app_sizing_prebuilt PROPERTY LINK_DEPENDS ${PROJECT_BINARY_DIR}/linker_app_sizing.cmd)
-    add_dependencies(     app_sizing_prebuilt linker_app_sizing_script offsets)
+    add_dependencies(     app_sizing_prebuilt linker_app_sizing_script offsets )
 
     add_custom_command(
       TARGET app_sizing_prebuilt
@@ -1048,19 +1169,19 @@ list_append_ifdef(CONFIG_CHECK_LINK_MAP
 list_append_ifdef(
   CONFIG_BUILD_OUTPUT_HEX
   post_build_commands
-  COMMAND ${CMAKE_OBJCOPY} -S -Oihex   -R .comment -R COMMON -R .eh_frame  ${KERNEL_ELF_NAME}    ${KERNEL_HEX_NAME}
+  COMMAND ${CMAKE_OBJCOPY} -S -Oihex --gap-fill 0xFF  -R .comment -R COMMON -R .eh_frame  ${KERNEL_ELF_NAME}    ${KERNEL_HEX_NAME}
   )
 
 list_append_ifdef(
   CONFIG_BUILD_OUTPUT_BIN
   post_build_commands
-  COMMAND ${CMAKE_OBJCOPY} -S -Obinary -R .comment -R COMMON -R .eh_frame  ${KERNEL_ELF_NAME}    ${KERNEL_BIN_NAME}
+  COMMAND ${CMAKE_OBJCOPY} -S -Obinary --gap-fill 0xFF -R .comment -R COMMON -R .eh_frame  ${KERNEL_ELF_NAME}    ${KERNEL_BIN_NAME}
   )
 
 list_append_ifdef(
   CONFIG_BUILD_OUTPUT_S19
   post_build_commands
-  COMMAND ${CMAKE_OBJCOPY} --srec-len 1 --output-target=srec ${KERNEL_ELF_NAME} ${KERNEL_S19_NAME}
+  COMMAND ${CMAKE_OBJCOPY} --gap-fill 0xFF --srec-len 1 --output-target=srec ${KERNEL_ELF_NAME} ${KERNEL_S19_NAME}
   )
 
 list_append_ifdef(

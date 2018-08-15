@@ -9,38 +9,41 @@ import textwrap
 
 import kconfiglib
 
-# "Extend" the standard kconfiglib.expr_str() to turn references to defined
-# Kconfig symbols into RST links. Symbol.__str__() will then use the extended
-# version.
-#
-# This is a bit hacky, but better than reimplementing Symbol.__str__() and/or
-# kconfiglib.expr_str().
 
-def expr_str_rst(expr):
-    # Skip constant and undefined symbols by checking if expr.nodes is empty
-    if isinstance(expr, kconfiglib.Symbol) and expr.nodes:
-        # The "\ " avoids RST issues for !CONFIG_FOO -- see
-        # http://docutils.sourceforge.net/docs/ref/rst/restructuredtext.html#character-level-inline-markup
-        return r"\ :option:`{0} <CONFIG_{0}>`".format(expr.name)
+def rst_link(sc):
+    # Returns an RST link (string) for the symbol/choice 'sc', or the normal
+    # Kconfig expression format (e.g. just the name) for 'sc' if it can't be
+    # turned into a link.
 
-    # Choices appear as dependencies of choice symbols.
-    #
-    # Use a :ref: instead of an :option:. With an :option:, we'd have to have
-    # an '.. option::' in the choice reference page as well. That would make
-    # the internal choice ID show up in the documentation.
-    #
-    # Note that the first pair of <...> is non-syntactic here. We just display
-    # choices links within <> in the documentation.
-    if isinstance(expr, kconfiglib.Choice):
+    if isinstance(sc, kconfiglib.Symbol):
+        # Skip constant and undefined symbols by checking if expr.nodes is
+        # empty
+        if sc.nodes:
+            # The "\ " avoids RST issues for !CONFIG_FOO -- see
+            # http://docutils.sourceforge.net/docs/ref/rst/restructuredtext.html#character-level-inline-markup
+            return r"\ :option:`{0} <CONFIG_{0}>`".format(sc.name)
+
+    elif isinstance(sc, kconfiglib.Choice):
+        # Choices appear as dependencies of choice symbols.
+        #
+        # Use a :ref: instead of an :option:. With an :option:, we'd have to have
+        # an '.. option::' in the choice reference page as well. That would make
+        # the internal choice ID show up in the documentation.
+        #
+        # Note that the first pair of <...> is non-syntactic here. We just display
+        # choices links within <> in the documentation.
         return r"\ :ref:`<{}> <{}>`" \
-               .format(choice_desc(expr), choice_id(expr))
+               .format(choice_desc(sc), choice_id(sc))
 
-    # We'll end up back in expr_str_rst() when expr_str_orig() does recursive
-    # calls for subexpressions
-    return expr_str_orig(expr)
+    # Can't turn 'sc' into a link. Use the standard Kconfig format.
+    return kconfiglib.standard_sc_expr_str(sc)
 
-expr_str_orig = kconfiglib.expr_str
-kconfiglib.expr_str = expr_str_rst
+
+def expr_str(expr):
+    # Returns the Kconfig representation of 'expr', with symbols/choices turned
+    # into RST links
+
+    return kconfiglib.expr_str(expr, rst_link)
 
 
 INDEX_RST_HEADER = """.. _configuration:
@@ -61,7 +64,7 @@ are organized based on their common characteristics and on what new symbols
 they add to the configuration menus.
 
 The configuration options' information below is extracted directly from
-:program:`Kconfig` using the :file:`~/doc/scripts/genrest.py` script. Click on
+:program:`Kconfig`. Click on
 the option name in the table below for detailed information about each option.
 
 Supported Options
@@ -202,24 +205,39 @@ def direct_deps_rst(sc):
            "===================\n\n" \
            "{}\n\n" \
            "*(Includes any dependencies from if's and menus.)*\n\n" \
-           .format(kconfiglib.expr_str(sc.direct_dep))
+           .format(expr_str(sc.direct_dep))
 
 
 def defaults_rst(sc):
     # Returns RST that lists the 'default' properties of 'sc' (symbol or
     # choice)
 
-    if not sc.defaults:
+    if isinstance(sc, kconfiglib.Symbol) and sc.choice:
+        # 'default's on choice symbols have no effect (and generate a warning).
+        # The implicit value hint below would be misleading as well.
         return ""
 
     rst = "Defaults\n" \
           "========\n\n"
 
-    for value, cond in sc.defaults:
-        default_str = kconfiglib.expr_str(value)
-        if cond is not sc.kconfig.y:
-            default_str += " if " + kconfiglib.expr_str(cond)
-        rst += "- {}\n".format(default_str)
+    if sc.defaults:
+        for value, cond in sc.defaults:
+            rst += "- " + expr_str(value)
+            if cond is not sc.kconfig.y:
+                rst += " if " + expr_str(cond)
+            rst += "\n"
+
+    else:
+        rst += "No defaults. Implicitly defaults to "
+
+        if isinstance(sc, kconfiglib.Choice):
+            rst += "the first (visible) choice option.\n"
+        elif sc.orig_type in (kconfiglib.BOOL, kconfiglib.TRISTATE):
+            rst += "``n``.\n"
+        else:
+            # This is accurate even for int/hex symbols, though an active
+            # 'range' might clamp the value (which is then treated as zero)
+            rst += "the empty string.\n"
 
     return rst + "\n"
 
@@ -235,7 +253,7 @@ def choice_syms_rst(choice):
 
     for sym in choice.syms:
         # Generates a link
-        rst += "- {}\n".format(kconfiglib.expr_str(sym))
+        rst += "- {}\n".format(expr_str(sym))
 
     return rst + "\n"
 
@@ -264,8 +282,7 @@ def select_imply_rst(sym):
             # In both cases, we can split on AND and pick the first
             # operand.
 
-            # kconfiglib.expr_str() generates a link
-            rst += "- {}\n".format(kconfiglib.expr_str(
+            rst += "- {}\n".format(rst_link(
                 kconfiglib.split_expr(select, kconfiglib.AND)[0]))
 
         rst += "\n"
@@ -314,7 +331,7 @@ def kconfig_definition_rst(sc):
         "At ``{}:{}``, in menu ``{}``:\n\n"
         ".. parsed-literal::\n\n"
         "{}".format(node.filename, node.linenr, menu_path(node),
-                    textwrap.indent(str(node), " "*4))
+                    textwrap.indent(node.custom_str(rst_link), " "*4))
         for node in sc.nodes)
 
     rst += "\n\n*(Definitions include propagated dependencies, " \
@@ -362,14 +379,14 @@ def write_if_updated(filename, s):
     # which trigger documentation rebuilds.
 
     try:
-        with open(filename) as f:
+        with open(filename, 'r', encoding='utf-8') as f:
             if s == f.read():
                 return
     except OSError as e:
         if e.errno != errno.ENOENT:
             raise
 
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding='utf-8') as f:
         f.write(s)
 
 

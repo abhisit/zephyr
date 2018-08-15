@@ -10,6 +10,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <atomic.h>
 #include <misc/byteorder.h>
 #include <misc/util.h>
@@ -46,7 +47,6 @@ struct ccc_store {
 static sys_slist_t subscriptions;
 #endif /* CONFIG_BT_GATT_CLIENT */
 
-static const char *gap_name = CONFIG_BT_DEVICE_NAME;
 static const u16_t gap_appearance = CONFIG_BT_DEVICE_APPEARANCE;
 
 static sys_slist_t db;
@@ -54,9 +54,40 @@ static sys_slist_t db;
 static ssize_t read_name(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 void *buf, u16_t len, u16_t offset)
 {
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, gap_name,
-				 strlen(gap_name));
+	const char *name = bt_get_name();
+
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, name,
+				 strlen(name));
 }
+
+#if defined(CONFIG_BT_DEVICE_NAME_GATT_WRITABLE)
+
+static ssize_t write_name(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			 const void *buf, u16_t len, u16_t offset,
+			 u8_t flags)
+{
+	char value[CONFIG_BT_DEVICE_NAME_MAX] = {};
+
+	if (flags & BT_GATT_WRITE_FLAG_PREPARE) {
+		return len;
+	}
+
+	if (offset) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	}
+
+	if (len >= sizeof(value)) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+	}
+
+	memcpy(value, buf, len);
+
+	bt_set_name(value);
+
+	return len;
+}
+
+#endif /* CONFIG_BT_DEVICE_NAME_GATT_WRITABLE */
 
 static ssize_t read_appearance(struct bt_conn *conn,
 			       const struct bt_gatt_attr *attr, void *buf,
@@ -70,8 +101,16 @@ static ssize_t read_appearance(struct bt_conn *conn,
 
 static struct bt_gatt_attr gap_attrs[] = {
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_GAP),
+#if defined(CONFIG_BT_DEVICE_NAME_GATT_WRITABLE)
+	/* Require pairing for writes to device name */
+	BT_GATT_CHARACTERISTIC(BT_UUID_GAP_DEVICE_NAME,
+			       BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
+			       BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT,
+			       read_name, write_name, bt_dev.name),
+#else
 	BT_GATT_CHARACTERISTIC(BT_UUID_GAP_DEVICE_NAME, BT_GATT_CHRC_READ,
 			       BT_GATT_PERM_READ, read_name, NULL, NULL),
+#endif /* CONFIG_BT_DEVICE_NAME_GATT_WRITABLE */
 	BT_GATT_CHARACTERISTIC(BT_UUID_GAP_APPEARANCE, BT_GATT_CHRC_READ,
 			       BT_GATT_PERM_READ, read_appearance, NULL, NULL),
 };
@@ -772,20 +811,21 @@ static u8_t notify_cb(const struct bt_gatt_attr *attr, void *user_data)
 
 	/* Notify all peers configured */
 	for (i = 0; i < ccc->cfg_len; i++) {
+		struct bt_gatt_ccc_cfg *cfg = &ccc->cfg[i];
 		struct bt_conn *conn;
 		int err;
 
 		/* Check if config value matches data type since consolidated
 		 * value may be for a different peer.
 		 */
-		if (ccc->cfg[i].value != data->type) {
+		if (cfg->value != data->type) {
 			continue;
 		}
 
-		conn = bt_conn_lookup_addr_le(&ccc->cfg[i].peer);
+		conn = bt_conn_lookup_addr_le(cfg->id, &cfg->peer);
 		if (!conn) {
 			if (ccc->cfg == sc_ccc_cfg) {
-				sc_save(&ccc->cfg[i], data->params);
+				sc_save(cfg, data->params);
 			}
 			continue;
 		}
@@ -798,8 +838,8 @@ static u8_t notify_cb(const struct bt_gatt_attr *attr, void *user_data)
 		if (data->type == BT_GATT_CCC_INDICATE) {
 			err = gatt_indicate(conn, data->params);
 		} else {
-			err = gatt_notify(conn, attr->handle, data->data,
-					  data->len);
+			err = gatt_notify(conn, data->attr->handle,
+					  data->data, data->len);
 		}
 
 		bt_conn_unref(conn);
@@ -818,7 +858,6 @@ int bt_gatt_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		   const void *data, u16_t len)
 {
 	struct notify_data nfy;
-	u16_t value_handle = attr->handle;
 
 	__ASSERT(attr && attr->handle, "invalid parameters\n");
 
@@ -830,11 +869,11 @@ int bt_gatt_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			return -EINVAL;
 		}
 
-		value_handle += 1;
+		attr++;
 	}
 
 	if (conn) {
-		return gatt_notify(conn, attr->handle + 1, data, len);
+		return gatt_notify(conn, attr->handle, data, len);
 	}
 
 	nfy.err = -ENOTCONN;
@@ -843,7 +882,7 @@ int bt_gatt_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	nfy.data = data;
 	nfy.len = len;
 
-	bt_gatt_foreach_attr(value_handle, 0xffff, notify_cb, &nfy);
+	bt_gatt_foreach_attr(attr->handle, 0xffff, notify_cb, &nfy);
 
 	return nfy.err;
 }
@@ -941,16 +980,19 @@ static u8_t disconnected_cb(const struct bt_gatt_attr *attr, void *user_data)
 	}
 
 	for (i = 0; i < ccc->cfg_len; i++) {
+		struct bt_gatt_ccc_cfg *cfg = &ccc->cfg[i];
+
 		/* Ignore configurations with disabled value */
-		if (!ccc->cfg[i].value) {
+		if (!cfg->value) {
 			continue;
 		}
 
-		if (bt_conn_addr_le_cmp(conn, &ccc->cfg[i].peer)) {
+		if (conn->id != cfg->id ||
+		    bt_conn_addr_le_cmp(conn, &cfg->peer)) {
 			struct bt_conn *tmp;
 
 			/* Skip if there is another peer connected */
-			tmp = bt_conn_lookup_addr_le(&ccc->cfg[i].peer);
+			tmp = bt_conn_lookup_addr_le(cfg->id, &cfg->peer);
 			if (tmp) {
 				if (tmp->state == BT_CONN_CONNECTED) {
 					bt_conn_unref(tmp);
@@ -961,14 +1003,12 @@ static u8_t disconnected_cb(const struct bt_gatt_attr *attr, void *user_data)
 			}
 		} else {
 			/* Clear value if not paired */
-			if (!bt_addr_le_is_bonded(&conn->le.dst)) {
-				bt_addr_le_copy(&ccc->cfg[i].peer,
-						BT_ADDR_LE_ANY);
-				ccc->cfg[i].value = 0;
+			if (!bt_addr_le_is_bonded(conn->id, &conn->le.dst)) {
+				bt_addr_le_copy(&cfg->peer, BT_ADDR_LE_ANY);
+				cfg->value = 0;
 			} else {
 				/* Update address in case it has changed */
-				bt_addr_le_copy(&ccc->cfg[i].peer,
-						&conn->le.dst);
+				bt_addr_le_copy(&cfg->peer, &conn->le.dst);
 			}
 		}
 	}
@@ -1037,7 +1077,7 @@ static void remove_subscriptions(struct bt_conn *conn)
 			continue;
 		}
 
-		if (!bt_addr_le_is_bonded(&conn->le.dst) ||
+		if (!bt_addr_le_is_bonded(conn->id, &conn->le.dst) ||
 		    (params->flags & BT_GATT_SUBSCRIBE_FLAG_VOLATILE)) {
 			/* Remove subscription */
 			params->value = 0;
@@ -1619,7 +1659,7 @@ int bt_gatt_discover(struct bt_conn *conn,
 	__ASSERT(params && params->func, "invalid parameters\n");
 	__ASSERT((params->start_handle && params->end_handle),
 		 "invalid parameters\n");
-	__ASSERT((params->start_handle < params->end_handle),
+	__ASSERT((params->start_handle <= params->end_handle),
 		 "invalid parameters\n");
 
 	if (conn->state != BT_CONN_CONNECTED) {
@@ -1698,6 +1738,7 @@ static int gatt_read_blob(struct bt_conn *conn,
 	return gatt_send(conn, buf, gatt_read_rsp, params, NULL);
 }
 
+#if defined(CONFIG_BT_GATT_READ_MULTIPLE)
 static void gatt_read_multiple_rsp(struct bt_conn *conn, u8_t err,
 				   const void *pdu, u16_t length,
 				   void *user_data)
@@ -1735,6 +1776,13 @@ static int gatt_read_multiple(struct bt_conn *conn,
 
 	return gatt_send(conn, buf, gatt_read_multiple_rsp, params, NULL);
 }
+#else
+static int gatt_read_multiple(struct bt_conn *conn,
+			      struct bt_gatt_read_params *params)
+{
+	return -ENOTSUP;
+}
+#endif /* CONFIG_BT_GATT_READ_MULTIPLE */
 
 int bt_gatt_read(struct bt_conn *conn, struct bt_gatt_read_params *params)
 {
@@ -2127,8 +2175,8 @@ void bt_gatt_disconnected(struct bt_conn *conn)
 	bt_gatt_foreach_attr(0x0001, 0xffff, disconnected_cb, conn);
 
 	if (IS_ENABLED(CONFIG_BT_SETTINGS) &&
-	    bt_addr_le_is_bonded(&conn->le.dst)) {
-		bt_gatt_store_ccc(&conn->le.dst);
+	    bt_addr_le_is_bonded(conn->id, &conn->le.dst)) {
+		bt_gatt_store_ccc(conn->id, &conn->le.dst);
 	}
 
 #if defined(CONFIG_BT_GATT_CLIENT)
@@ -2189,7 +2237,7 @@ static u8_t ccc_save(const struct bt_gatt_attr *attr, void *user_data)
 	return BT_GATT_ITER_CONTINUE;
 }
 
-int bt_gatt_store_ccc(const bt_addr_le_t *addr)
+int bt_gatt_store_ccc(u8_t id, const bt_addr_le_t *addr)
 {
 	struct ccc_save save;
 	char val[BT_SETTINGS_SIZE(sizeof(save.store))];
@@ -2210,8 +2258,16 @@ int bt_gatt_store_ccc(const bt_addr_le_t *addr)
 		return -EINVAL;
 	}
 
-	bt_settings_encode_key(key, sizeof(key), "ccc",
-			       (bt_addr_le_t *)addr, NULL);
+	if (id) {
+		char id_str[4];
+
+		snprintk(id_str, sizeof(id_str), "%u", id);
+		bt_settings_encode_key(key, sizeof(key), "ccc",
+				       (bt_addr_le_t *)addr, id_str);
+	} else {
+		bt_settings_encode_key(key, sizeof(key), "ccc",
+				       (bt_addr_le_t *)addr, NULL);
+	}
 
 	err = settings_save_one(key, str);
 	if (err) {
@@ -2225,12 +2281,20 @@ int bt_gatt_store_ccc(const bt_addr_le_t *addr)
 	return 0;
 }
 
-int bt_gatt_clear_ccc(const bt_addr_le_t *addr)
+int bt_gatt_clear_ccc(u8_t id, const bt_addr_le_t *addr)
 {
 	char key[BT_SETTINGS_KEY_MAX];
 
-	bt_settings_encode_key(key, sizeof(key), "ccc",
-			       (bt_addr_le_t *)addr, NULL);
+	if (id) {
+		char id_str[4];
+
+		snprintk(id_str, sizeof(id_str), "%u", id);
+		bt_settings_encode_key(key, sizeof(key), "ccc",
+				       (bt_addr_le_t *)addr, id_str);
+	} else {
+		bt_settings_encode_key(key, sizeof(key), "ccc",
+				       (bt_addr_le_t *)addr, NULL);
+	}
 
 	return settings_save_one(key, NULL);
 }
@@ -2250,6 +2314,7 @@ static void ccc_clear(struct _bt_gatt_ccc *ccc, bt_addr_le_t *addr)
 }
 
 struct ccc_load {
+	u8_t id;
 	bt_addr_le_t addr;
 	struct ccc_store *entry;
 	size_t count;
@@ -2318,6 +2383,10 @@ static int ccc_set(int argc, char **argv, char *val)
 	if (argc < 1) {
 		BT_ERR("Insufficient number of arguments");
 		return -EINVAL;
+	} else if (argc == 1) {
+		load.id = BT_ID_DEFAULT;
+	} else {
+		load.id = strtol(argv[1], NULL, 10);
 	}
 
 	BT_DBG("argv[0] %s val %s", argv[0], val ? val : "(null)");
@@ -2335,8 +2404,12 @@ static int ccc_set(int argc, char **argv, char *val)
 			BT_ERR("Failed to decode value (err %d)", err);
 			return err;
 		}
+
 		load.entry = ccc_store;
 		load.count = len / sizeof(*ccc_store);
+	} else {
+		load.entry = NULL;
+		load.count = 0;
 	}
 
 	bt_gatt_foreach_attr(0x0001, 0xffff, ccc_load, &load);

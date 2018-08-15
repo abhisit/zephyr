@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+# Copyright (c) 2018, Nordic Semiconductor ASA and Ulf Magnusson
+# SPDX-License-Identifier: ISC
+
 """
 Overview
 ========
@@ -84,18 +87,15 @@ import locale
 import os
 import platform
 import re
-import sys
 import textwrap
 
-# We need this double import for the _expr_str() override below
-import kconfiglib
-
-from kconfiglib import Kconfig, \
-                       Symbol, Choice, MENU, COMMENT, MenuNode, \
+from kconfiglib import Symbol, Choice, MENU, COMMENT, MenuNode, \
                        BOOL, TRISTATE, STRING, INT, HEX, UNKNOWN, \
                        AND, OR, NOT, \
-                       expr_value, split_expr, \
-                       TRI_TO_STR, TYPE_TO_STR
+                       expr_str, expr_value, split_expr, \
+                       standard_sc_expr_str, \
+                       TRI_TO_STR, TYPE_TO_STR, \
+                       standard_kconfig, standard_config_filename
 
 
 #
@@ -146,7 +146,8 @@ _JUMP_TO_HELP_LINES = """
 Type text to narrow the search. Regexes are supported (via Python's 're'
 module). The up/down cursor keys step in the list. [Enter] jumps to the
 selected symbol. [ESC] aborts the search. Type multiple space-separated
-strings/regexes to find entries that match all of them.
+strings/regexes to find entries that match all of them. Type Ctrl-F to
+view the help of the selected item without leaving the dialog.
 """[1:-1].split("\n")
 
 def _init_styles():
@@ -241,42 +242,38 @@ def _style(fg_color, bg_color, attribs, no_color_extra_attribs=0,
 
     return color_attribs[(fg_color, bg_color)] | attribs
 
-# "Extend" the standard kconfiglib.expr_str() to show values for symbols
-# appearing in expressions, for the information dialog.
-#
-# This is a bit hacky, but officially supported. It beats having to reimplement
-# expression printing just to tweak it a bit.
 
-def _expr_str_val(expr):
-    if isinstance(expr, Symbol) and not expr.is_constant and \
-       not _is_num(expr.name):
-        # Show the values of non-constant (non-quoted) symbols that don't look
-        # like numbers. Things like 123 are actually a symbol references, and
-        # only work as expected due to undefined symbols getting their name as
-        # their value. Showing the symbol value there isn't helpful though.
+def _name_and_val_str(sc):
+    # Custom symbol printer that shows the symbol value after the symbol, used
+    # for the information display
 
-        if not expr.nodes:
+    # Show the values of non-constant (non-quoted) symbols that don't look like
+    # numbers. Things like 123 are actually symbol references, and only work as
+    # expected due to undefined symbols getting their name as their value.
+    # Showing the symbol value for those isn't helpful though.
+    if isinstance(sc, Symbol) and \
+       not sc.is_constant and \
+       not _is_num(sc.name):
+
+        if not sc.nodes:
             # Undefined symbol reference
-            return "{}(undefined/n)".format(expr.name)
+            return "{}(undefined/n)".format(sc.name)
 
-        return '{}(="{}")'.format(expr.name, expr.str_value)
+        return '{}(={})'.format(sc.name, sc.str_value)
 
-    if isinstance(expr, tuple) and expr[0] == NOT and \
-       isinstance(expr[1], Symbol):
+    # For other symbols, use the standard format
+    return standard_sc_expr_str(sc)
 
-        # Put a space after "!" before a symbol, since '! FOO(="y")' makes it
-        # clearer than '!FOO(="y")' that "y" is the value of FOO itself
-        return "! " + _expr_str(expr[1])
+def _expr_str(expr):
+    # Custom expression printer that shows symbol values
+    return expr_str(expr, _name_and_val_str)
 
-    # We'll end up back in _expr_str_val() when _expr_str_orig() does recursive
-    # calls for subexpressions
-    return _expr_str_orig(expr)
 
-# Do hacky expr_str() extension. The rest of the code will just call
-# _expr_str().
-_expr_str_orig = kconfiglib.expr_str
-kconfiglib.expr_str = _expr_str_val
-_expr_str = _expr_str_val
+# Entry point when run as an executable, split out so that setuptools'
+# 'entry_points' can be used. It produces a handy menuconfig.exe launcher on
+# Windows.
+def _main():
+    menuconfig(standard_kconfig())
 
 def menuconfig(kconf):
     """
@@ -285,29 +282,33 @@ def menuconfig(kconf):
     kconf:
       Kconfig instance to be configured
     """
-
-    globals()["_kconf"] = kconf
+    global _kconf
     global _config_filename
     global _show_all
+    global _conf_changed
+
+    _kconf = kconf
 
 
-    _config_filename = os.environ.get("KCONFIG_CONFIG")
-    if _config_filename is None:
-        _config_filename = ".config"
-
+    _config_filename = standard_config_filename()
 
     if os.path.exists(_config_filename):
+        _conf_changed = False
         print("Using existing configuration '{}' as base"
               .format(_config_filename))
         _kconf.load_config(_config_filename)
 
-    elif kconf.defconfig_filename is not None:
-        print("Using default configuration found in '{}' as base"
-              .format(kconf.defconfig_filename))
-        _kconf.load_config(kconf.defconfig_filename)
-
     else:
-        print("Using default symbol values as base")
+        # Always prompt for save if the output configuration file doesn't exist
+        _conf_changed = True
+
+        if kconf.defconfig_filename is not None:
+            print("Using default configuration found in '{}' as base"
+                  .format(kconf.defconfig_filename))
+            _kconf.load_config(kconf.defconfig_filename)
+
+        else:
+            print("Using default symbol values as base")
 
 
     # Any visible items in the top menu?
@@ -439,13 +440,13 @@ def _menuconfig(stdscr):
                     _leave_menu()
 
         elif c in ("n", "N"):
-            _set_node_tri_val(_shown[_sel_node_i], 0)
+            _set_sel_node_tri_val(0)
 
         elif c in ("m", "M"):
-            _set_node_tri_val(_shown[_sel_node_i], 1)
+            _set_sel_node_tri_val(1)
 
         elif c in ("y", "Y"):
-            _set_node_tri_val(_shown[_sel_node_i], 2)
+            _set_sel_node_tri_val(2)
 
         elif c in (curses.KEY_LEFT, curses.KEY_BACKSPACE, _ERASE_CHAR,
                    "\x1B",  # \x1B = ESC
@@ -491,7 +492,7 @@ def _menuconfig(stdscr):
             _resize_main()
 
         elif c == "?":
-            _info_dialog(_shown[_sel_node_i])
+            _info_dialog(_shown[_sel_node_i], False)
             # The terminal might have been resized while the fullscreen info
             # dialog was open
             _resize_main()
@@ -508,29 +509,29 @@ def _menuconfig(stdscr):
                 return res
 
 def quit_dialog():
-   if not _conf_changed:
-       return "No changes to save"
+    if not _conf_changed:
+        return "No changes to save"
 
-   while True:
-       c = _key_dialog(
-           "Quit",
-           " Save configuration?\n"
-           "\n"
-           "(Y)es  (N)o  (C)ancel",
-           "ync")
+    while True:
+        c = _key_dialog(
+            "Quit",
+            " Save configuration?\n"
+            "\n"
+            "(Y)es  (N)o  (C)ancel",
+            "ync")
 
-       if c is None or c == "c":
-           return None
+        if c is None or c == "c":
+            return None
 
-       if c == "y":
-           if _try_save(_kconf.write_config, _config_filename,
-                        "configuration"):
+        if c == "y":
+            if _try_save(_kconf.write_config, _config_filename,
+                         "configuration"):
 
-               return "Configuration saved to '{}'" \
-                      .format(_config_filename)
+                return "Configuration saved to '{}'" \
+                       .format(_config_filename)
 
-       elif c == "n":
-           return "Configuration was not saved"
+        elif c == "n":
+            return "Configuration was not saved"
 
 def _init():
     # Initializes the main display with the list of symbols, etc. Also does
@@ -552,8 +553,6 @@ def _init():
     global _menu_scroll
 
     global _show_name
-
-    global _conf_changed
 
     # Looking for this in addition to KEY_BACKSPACE (which is unreliable) makes
     # backspace work with TERM=vt100. That makes it likely to work in sane
@@ -601,9 +600,6 @@ def _init():
 
     # Give windows their initial size
     _resize_main()
-
-    # No changes yet
-    _conf_changed = False
 
 def _resize_main():
     # Resizes the main display, with the list of symbols, etc., to fill the
@@ -1043,15 +1039,13 @@ def _change_node(node):
         val_index = sc.assignable.index(sc.tri_value)
         _set_val(sc, sc.assignable[(val_index + 1) % len(sc.assignable)])
 
-    _update_menu()
+def _set_sel_node_tri_val(tri_val):
+    # Sets the value of the currently selected menu entry to 'tri_val', if that
+    # value can be assigned
 
-def _set_node_tri_val(node, tri_val):
-    # Sets 'node' to 'tri_val', if that value can be assigned
-
-    if isinstance(node.item, (Symbol, Choice)) and \
-       tri_val in node.item.assignable:
-
-        _set_val(node.item, tri_val)
+    sc = _shown[_sel_node_i].item
+    if isinstance(sc, (Symbol, Choice)) and tri_val in sc.assignable:
+        _set_val(sc, tri_val)
 
 def _set_val(sc, val):
     # Wrapper around Symbol/Choice.set_value() for updating the menu state and
@@ -1276,8 +1270,7 @@ def _save_dialog(save_fn, default_filename, description):
     filename = default_filename
     while True:
         filename = _input_dialog("Filename to save {} to".format(description),
-                                 filename,
-                                 _load_save_info())
+                                 filename, _load_save_info())
 
         if filename is None:
             return False
@@ -1398,6 +1391,12 @@ def _draw_frame(win, title):
     win.attroff(_DIALOG_FRAME_STYLE)
 
 def _jump_to_dialog():
+    # Implements the jump-to dialog, where symbols can be looked up via
+    # incremental search and jumped to.
+    #
+    # Returns True if the user jumped to a symbol, and False if the dialog was
+    # canceled.
+
     # Search text
     s = ""
     # Previous search text
@@ -1449,10 +1448,10 @@ def _jump_to_dialog():
         nonlocal scroll
 
         if sel_node_i > 0:
-           sel_node_i -= 1
+            sel_node_i -= 1
 
-           if sel_node_i <= scroll + _SCROLL_OFFSET:
-               scroll = max(scroll - 1, 0)
+            if sel_node_i <= scroll + _SCROLL_OFFSET:
+                scroll = max(scroll - 1, 0)
 
     while True:
         if s != prev_s:
@@ -1517,17 +1516,25 @@ def _jump_to_dialog():
             if matches:
                 _jump_to(matches[sel_node_i])
                 _safe_curs_set(0)
-                return
+                return True
 
-        if c == "\x1B":  # \x1B = ESC
+        elif c == "\x1B":  # \x1B = ESC
             _safe_curs_set(0)
-            return
+            return False
 
-
-        if c == curses.KEY_RESIZE:
+        elif c == curses.KEY_RESIZE:
             # We adjust the scroll so that the selected node stays visible in
             # the list when the terminal is resized, hence the 'scroll'
             # assignment
+            scroll = _resize_jump_to_dialog(
+                edit_box, matches_win, bot_sep_win, help_win,
+                sel_node_i, scroll)
+
+        elif c == "\x06":  # \x06 = Ctrl-F
+            _safe_curs_set(0)
+            _info_dialog(matches[sel_node_i], True)
+            _safe_curs_set(1)
+
             scroll = _resize_jump_to_dialog(
                 edit_box, matches_win, bot_sep_win, help_win,
                 sel_node_i, scroll)
@@ -1552,7 +1559,7 @@ def _jump_to_dialog():
             s, s_i, hscroll = _edit_text(c, s, s_i, hscroll,
                                          edit_box.getmaxyx()[1] - 2)
 
-# Obscure Python: We never pass a value for cached_search_strings, and it keeps
+# Obscure Python: We never pass a value for cached_search_nodes, and it keeps
 # pointing to the same list. This avoids a global.
 def _searched_nodes(cached_search_nodes=[]):
     # Returns a list of menu nodes to search, sorted by symbol name
@@ -1628,7 +1635,7 @@ def _draw_jump_to_dialog(edit_box, matches_win, bot_sep_win, help_win,
 
             sym = matches[i].item
 
-            sym_str = '{}(="{}")'.format(sym.name, sym.str_value)
+            sym_str = _name_and_val_str(sym)
             if matches[i].prompt:
                 sym_str += ' "{}"'.format(matches[i].prompt[0])
 
@@ -1690,8 +1697,13 @@ def _draw_jump_to_dialog(edit_box, matches_win, bot_sep_win, help_win,
 
     edit_box.noutrefresh()
 
-def _info_dialog(node):
-    # Shows a fullscreen window with information about 'node'
+def _info_dialog(node, from_jump_to_dialog):
+    # Shows a fullscreen window with information about 'node'.
+    #
+    # If 'from_jump_to_dialog' is True, the information dialog was opened from
+    # within the jump-to-dialog. In this case, we make '/' from within the
+    # information dialog just return, to avoid a confusing recursive invocation
+    # of the jump-to-dialog.
 
     # Top row, with title and arrows point up
     top_line_win = _styled_win(_SEPARATOR_STYLE)
@@ -1746,6 +1758,22 @@ def _info_dialog(node):
         elif c in (curses.KEY_UP, "k", "K"):
             if scroll > 0:
                 scroll -= 1
+
+        elif c == "/":
+            # Support starting a search from within the information dialog
+
+            if from_jump_to_dialog:
+                # Avoid recursion
+                return
+
+            if _jump_to_dialog():
+                # Jumped to a symbol. Cancel the information dialog.
+                return
+
+            # Stay in the information dialog if the jump-to dialog was
+            # canceled. Resize it in case the terminal was resized while the
+            # fullscreen jump-to dialog was open.
+            _resize_info_dialog(top_line_win, text_win, bot_sep_win, help_win)
 
         elif c in (curses.KEY_LEFT, curses.KEY_BACKSPACE, _ERASE_CHAR,
                    "\x1B",  # \x1B = ESC
@@ -1856,7 +1884,7 @@ def _info_str(node):
             _name_info(sym) +
             _prompt_info(sym) +
             "Type: {}\n".format(TYPE_TO_STR[sym.type]) +
-            'Value: "{}"\n\n'.format(sym.str_value) +
+            _value_info(sym) +
             _help_info(sym) +
             _direct_dep_info(sym) +
             _defaults_info(sym) +
@@ -1871,7 +1899,7 @@ def _info_str(node):
             _name_info(choice) +
             _prompt_info(choice) +
             "Type: {}\n".format(TYPE_TO_STR[choice.type]) +
-            'Mode: "{}"\n\n'.format(choice.str_value) +
+            'Mode: {}\n'.format(choice.str_value) +
             _help_info(choice) +
             _choice_syms_info(choice) +
             _direct_dep_info(choice) +
@@ -1899,6 +1927,15 @@ def _prompt_info(sc):
 
     return s
 
+def _value_info(sym):
+    # Returns a string showing 'sym's value
+
+    # Only put quotes around the value for string symbols
+    return "Value: {}\n".format(
+        '"{}"'.format(sym.str_value)
+        if sym.orig_type == STRING
+        else sym.str_value)
+
 def _choice_syms_info(choice):
     # Returns a string listing the choice symbols in 'choice'. Adds
     # "(selected)" next to the selected one.
@@ -1918,7 +1955,7 @@ def _help_info(sc):
     # Symbols and choices defined in multiple locations can have multiple help
     # texts.
 
-    s = ""
+    s = "\n"
 
     for node in sc.nodes:
         if node.help is not None:
@@ -1936,7 +1973,7 @@ def _direct_dep_info(sc):
     if sc.direct_dep is _kconf.y:
         return ""
 
-    return 'Direct dependencies (value: "{}"):\n{}\n' \
+    return 'Direct dependencies (={}):\n{}\n' \
            .format(TRI_TO_STR[expr_value(sc.direct_dep)],
                    _split_expr_info(sc.direct_dep, 2))
 
@@ -1951,8 +1988,18 @@ def _defaults_info(sc):
     for val, cond in sc.defaults:
         s += "  - "
         if isinstance(sc, Symbol):
-            s += '{} (value: "{}")' \
-                 .format(_expr_str(val), TRI_TO_STR[expr_value(val)])
+            s += _expr_str(val)
+
+            # Skip the value hint in these cases:
+            #
+            # - For string/int/hex symbols. The default can only be a single
+            #   symbol there, and it makes no sense to show its tristate value
+            #   (_expr_str() already shows its string value)
+            #
+            # - If the expression is just a symbol. _expr_str() already shows
+            #   its value in that case.
+            if sc.orig_type in (BOOL, TRISTATE) and isinstance(val, tuple):
+                s += '  (={})'.format(TRI_TO_STR[expr_value(val)])
         else:
             # Don't print the value next to the symbol name for choice
             # defaults, as it looks a bit confusing
@@ -1960,9 +2007,9 @@ def _defaults_info(sc):
         s += "\n"
 
         if cond is not _kconf.y:
-            s += '    Condition (value: "{}"):\n{}' \
+            s += '    Condition (={}):\n{}' \
                  .format(TRI_TO_STR[expr_value(cond)],
-                         _split_expr_info(cond, 7))
+                         _split_expr_info(cond, 4))
 
     return s + "\n"
 
@@ -1984,11 +2031,17 @@ def _split_expr_info(expr, indent):
 
     s = ""
     for i, term in enumerate(split_expr(expr, split_op)):
-        s += '{}{} {} (value: "{}")\n' \
-             .format(" "*indent,
-                     "  " if i == 0 else op_str,
-                     _expr_str(term),
-                     TRI_TO_STR[expr_value(term)])
+        s += "{}{} {}".format(" "*indent,
+                              "  " if i == 0 else op_str,
+                              _expr_str(term))
+
+        # Don't bother showing the value hint if the expression is just a
+        # single symbol. _expr_str() already shows its value.
+        if isinstance(term, tuple):
+            s += "  (={})".format(TRI_TO_STR[expr_value(term)])
+
+        s += "\n"
+
     return s
 
 def _select_imply_info(sym):
@@ -2034,7 +2087,8 @@ def _kconfig_def_info(item):
 
     s += "\n\n".join("At {}:{}, in menu {}:\n\n{}".format(
                          node.filename, node.linenr, _menu_path_info(node),
-                         textwrap.indent(str(node), "  "))
+                         textwrap.indent(node.custom_str(_name_and_val_str),
+                                         "  "))
                      for node in nodes)
 
     return s
@@ -2248,10 +2302,10 @@ def _value_str(node):
     if item.type == BOOL:
         return "[{}]".format(tri_val_str)
 
-    if item.type == TRISTATE:
-        if item.assignable == (1, 2):
-            return "{{{}}}".format(tri_val_str)  # {M}/{*}
-        return "<{}>".format(tri_val_str)
+    # item.type == TRISTATE
+    if item.assignable == (1, 2):
+        return "{{{}}}".format(tri_val_str)  # {M}/{*}
+    return "<{}>".format(tri_val_str)
 
 def _is_y_mode_choice_sym(item):
     # The choice mode is an upper bound on the visibility of choice symbols, so
@@ -2311,19 +2365,17 @@ def _is_num(name):
     # they get their name as their value when the symbol is undefined.
 
     try:
-        int(name, 10)
-        return True
-
+        int(name)
     except ValueError:
         if not name.startswith(("0x", "0X")):
             return False
 
         try:
             int(name, 16)
-            return True
-
         except ValueError:
             return False
+
+    return True
 
 def _get_wch_compat(win):
     # Decent resizing behavior on PDCurses requires calling resize_term(0, 0)
@@ -2414,8 +2466,4 @@ def _convert_c_lc_ctype_to_utf8():
 _IS_WINDOWS = (platform.system() == "Windows")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 2:
-        print("usage: {} [Kconfig]".format(sys.argv[0]), file=sys.stderr)
-        sys.exit(1)
-
-    menuconfig(Kconfig("Kconfig" if len(sys.argv) < 2 else sys.argv[1]))
+    _main()

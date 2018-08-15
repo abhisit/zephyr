@@ -37,6 +37,7 @@
  */
 
 #include <misc/printk.h>
+#include <settings/settings.h>
 #include <misc/byteorder.h>
 #include <nrf.h>
 #include <device.h>
@@ -392,7 +393,7 @@ static void gen_onoff_status(struct bt_mesh_model *model,
 		    bt_mesh_model_elem(model)->addr, ctx->addr, state);
 }
 
-static int output_number(bt_mesh_output_action_t action, uint32_t number)
+static int output_number(bt_mesh_output_action_t action, u32_t number)
 {
 	SYS_LOG_INF("OOB Number %u", number);
 	return 0;
@@ -440,7 +441,7 @@ static uint8_t pin_to_sw(uint32_t pin_pos)
 }
 
 static void button_pressed(struct device *dev, struct gpio_callback *cb,
-			   uint32_t pin_pos)
+			   u32_t pin_pos)
 {
 	/*
 	 * One button press within a 1 second interval sends an on message
@@ -578,7 +579,7 @@ static void bt_ready(int err)
 	SYS_LOG_INF("Bluetooth initialized");
 
 	/* Use identity address as device UUID */
-	if (bt_le_oob_get_local(&oob)) {
+	if (bt_le_oob_get_local(BT_ID_DEFAULT, &oob)) {
 		SYS_LOG_ERR("Identity Address unavailable");
 	} else {
 		memcpy(dev_uuid, oob.addr.a.val, 6);
@@ -588,6 +589,10 @@ static void bt_ready(int err)
 	if (err) {
 		SYS_LOG_ERR("Initializing mesh failed (err %d)", err);
 		return;
+	}
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
 	}
 
 	bt_mesh_prov_enable(BT_MESH_PROV_GATT | BT_MESH_PROV_ADV);

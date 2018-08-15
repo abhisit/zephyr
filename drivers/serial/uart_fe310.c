@@ -58,7 +58,8 @@ struct uart_fe310_device_config {
 
 struct uart_fe310_data {
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
-	uart_irq_callback_t callback;
+	uart_irq_callback_user_data_t callback;
+	void *cb_data;
 #endif
 };
 
@@ -309,11 +310,13 @@ static int uart_fe310_irq_update(struct device *dev)
  * @return N/A
  */
 static void uart_fe310_irq_callback_set(struct device *dev,
-					uart_irq_callback_t cb)
+					uart_irq_callback_user_data_t cb,
+					void *cb_data)
 {
 	struct uart_fe310_data *data = DEV_DATA(dev);
 
 	data->callback = cb;
+	data->cb_data = cb_data;
 }
 
 static void uart_fe310_irq_handler(void *arg)
@@ -322,7 +325,7 @@ static void uart_fe310_irq_handler(void *arg)
 	struct uart_fe310_data *data = DEV_DATA(dev);
 
 	if (data->callback)
-		data->callback(dev);
+		data->callback(data->cb_data);
 }
 
 #endif /* CONFIG_UART_INTERRUPT_DRIVEN */
@@ -382,9 +385,9 @@ static void uart_fe310_irq_cfg_func_0(void);
 #endif
 
 static const struct uart_fe310_device_config uart_fe310_dev_cfg_0 = {
-	.port         = FE310_UART_0_BASE_ADDR,
+	.port         = CONFIG_FE310_UART_0_BASE_ADDR,
 	.sys_clk_freq = uart_fe310_port_0_clk_freq,
-	.baud_rate    = CONFIG_UART_FE310_PORT_0_BAUD_RATE,
+	.baud_rate    = CONFIG_FE310_UART_0_CURRENT_SPEED,
 	.rxcnt_irq    = CONFIG_UART_FE310_PORT_0_RXCNT_IRQ,
 	.txcnt_irq    = CONFIG_UART_FE310_PORT_0_TXCNT_IRQ,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
@@ -392,7 +395,7 @@ static const struct uart_fe310_device_config uart_fe310_dev_cfg_0 = {
 #endif
 };
 
-DEVICE_AND_API_INIT(uart_fe310_0, CONFIG_UART_FE310_PORT_0_NAME,
+DEVICE_AND_API_INIT(uart_fe310_0, CONFIG_FE310_UART_0_LABEL,
 		    uart_fe310_init,
 		    &uart_fe310_data_0, &uart_fe310_dev_cfg_0,
 		    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
@@ -401,12 +404,12 @@ DEVICE_AND_API_INIT(uart_fe310_0, CONFIG_UART_FE310_PORT_0_NAME,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 static void uart_fe310_irq_cfg_func_0(void)
 {
-	IRQ_CONNECT(FE310_UART_0_IRQ,
+	IRQ_CONNECT(CONFIG_FE310_UART_0_IRQ_0,
 		    CONFIG_UART_FE310_PORT_0_IRQ_PRIORITY,
 		    uart_fe310_irq_handler, DEVICE_GET(uart_fe310_0),
 		    0);
 
-	irq_enable(FE310_UART_0_IRQ);
+	irq_enable(CONFIG_FE310_UART_0_IRQ_0);
 }
 #endif
 
@@ -421,9 +424,9 @@ static void uart_fe310_irq_cfg_func_1(void);
 #endif
 
 static const struct uart_fe310_device_config uart_fe310_dev_cfg_1 = {
-	.port         = FE310_UART_1_BASE_ADDR,
+	.port         = CONFIG_FE310_UART_1_BASE_ADDR,
 	.sys_clk_freq = uart_fe310_port_1_clk_freq,
-	.baud_rate    = CONFIG_UART_FE310_PORT_1_BAUD_RATE,
+	.baud_rate    = CONFIG_FE310_UART_1_CURRENT_SPEED,
 	.rxcnt_irq    = CONFIG_UART_FE310_PORT_1_RXCNT_IRQ,
 	.txcnt_irq    = CONFIG_UART_FE310_PORT_1_TXCNT_IRQ,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
@@ -431,7 +434,7 @@ static const struct uart_fe310_device_config uart_fe310_dev_cfg_1 = {
 #endif
 };
 
-DEVICE_AND_API_INIT(uart_fe310_1, CONFIG_UART_FE310_PORT_1_NAME,
+DEVICE_AND_API_INIT(uart_fe310_1, CONFIG_FE310_UART_1_LABEL,
 		    uart_fe310_init,
 		    &uart_fe310_data_1, &uart_fe310_dev_cfg_1,
 		    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
@@ -440,12 +443,12 @@ DEVICE_AND_API_INIT(uart_fe310_1, CONFIG_UART_FE310_PORT_1_NAME,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 static void uart_fe310_irq_cfg_func_1(void)
 {
-	IRQ_CONNECT(FE310_UART_1_IRQ,
+	IRQ_CONNECT(CONFIG_FE310_UART_1_IRQ_0,
 		    CONFIG_UART_FE310_PORT_1_IRQ_PRIORITY,
 		    uart_fe310_irq_handler, DEVICE_GET(uart_fe310_1),
 		    0);
 
-	irq_enable(FE310_UART_1_IRQ);
+	irq_enable(CONFIG_FE310_UART_1_IRQ_0);
 }
 #endif
 

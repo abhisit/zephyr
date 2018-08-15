@@ -72,6 +72,14 @@ set(APPLICATION_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR} CACHE PATH "Application B
 set(__build_dir ${CMAKE_CURRENT_BINARY_DIR}/zephyr)
 
 set(PROJECT_BINARY_DIR ${__build_dir})
+
+# CMake's 'project' concept has proven to not be very useful for Zephyr
+# due in part to how Zephyr is organized and in part to it not fitting well
+# with cross compilation.
+# CMake therefore tries to rely as little as possible on project()
+# and its associated variables, e.g. PROJECT_SOURCE_DIR.
+# It is recommended to always use ZEPHYR_BASE instead of PROJECT_SOURCE_DIR
+# when trying to reference ENV${ZEPHYR_BASE}.
 set(PROJECT_SOURCE_DIR $ENV{ZEPHYR_BASE})
 
 # Convert path to use the '/' separator
@@ -243,8 +251,8 @@ include(${ZEPHYR_BASE}/cmake/toolchain.cmake)
 
 find_package(Git QUIET)
 if(GIT_FOUND)
-  execute_process(COMMAND ${GIT_EXECUTABLE} --work-tree=${ZEPHYR_BASE} describe
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  execute_process(COMMAND ${GIT_EXECUTABLE} describe
+    WORKING_DIRECTORY ${ZEPHYR_BASE}
     OUTPUT_VARIABLE BUILD_VERSION
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 endif()
@@ -310,6 +318,24 @@ foreach(boilerplate_lib ${ZEPHYR_INTERFACE_LIBS_PROPERTY})
   target_link_libraries_ifdef(
     CONFIG_APP_LINK_WITH_${boilerplate_lib_upper_case}
     app
+    PUBLIC
     ${boilerplate_lib}
     )
 endforeach()
+
+
+if(NOT EXISTS ${ZEPHYR_BASE}/hide-defaults-note)
+    message(STATUS "\n\
+*******************************\n\
+*** NOTE TO KCONFIG AUTHORS ***\n\
+*******************************\n\
+\n\
+The behavior of Kconfig 'default' properties in Zephyr has changed. The \n\
+earliest default with a satisfied condition is now used, instead of the \n\
+last one. This is standard Kconfig behavior.\n\
+\n\
+See http://docs.zephyrproject.org/porting/board_porting.html#old-zephyr-kconfig-behavior-for-defaults.\n\
+\n\
+To get rid of this note, create a file called 'hide-defaults-note' in the \n\
+Zephyr root directory. An empty file is fine.")
+endif()

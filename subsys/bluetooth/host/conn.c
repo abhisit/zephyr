@@ -785,8 +785,8 @@ void bt_conn_identity_resolved(struct bt_conn *conn)
 	}
 }
 
-int bt_conn_le_start_encryption(struct bt_conn *conn, u8_t rand[8], u16_t ediv,
-				const u8_t *ltk, size_t len)
+int bt_conn_le_start_encryption(struct bt_conn *conn, u8_t rand[8],
+				u8_t ediv[2], const u8_t *ltk, size_t len)
 {
 	struct bt_hci_cp_le_start_encryption *cp;
 	struct net_buf *buf;
@@ -799,7 +799,7 @@ int bt_conn_le_start_encryption(struct bt_conn *conn, u8_t rand[8], u16_t ediv,
 	cp = net_buf_add(buf, sizeof(*cp));
 	cp->handle = sys_cpu_to_le16(conn->handle);
 	memcpy(&cp->rand, rand, sizeof(cp->rand));
-	cp->ediv = ediv;
+	memcpy(&cp->ediv, ediv, sizeof(cp->ediv));
 
 	memcpy(cp->ltk, ltk, len);
 	if (len < sizeof(cp->ltk)) {
@@ -893,9 +893,10 @@ static int start_security(struct bt_conn *conn)
 	{
 		if (!conn->le.keys) {
 			conn->le.keys = bt_keys_find(BT_KEYS_LTK_P256,
-						     &conn->le.dst);
+						     conn->id, &conn->le.dst);
 			if (!conn->le.keys) {
 				conn->le.keys = bt_keys_find(BT_KEYS_LTK,
+							     conn->id,
 							     &conn->le.dst);
 			}
 		}
@@ -1577,7 +1578,7 @@ int bt_conn_addr_le_cmp(const struct bt_conn *conn, const bt_addr_le_t *peer)
 	return bt_addr_le_cmp(peer, &conn->le.init_addr);
 }
 
-struct bt_conn *bt_conn_lookup_addr_le(const bt_addr_le_t *peer)
+struct bt_conn *bt_conn_lookup_addr_le(u8_t id, const bt_addr_le_t *peer)
 {
 	int i;
 
@@ -1590,7 +1591,8 @@ struct bt_conn *bt_conn_lookup_addr_le(const bt_addr_le_t *peer)
 			continue;
 		}
 
-		if (!bt_conn_addr_le_cmp(&conns[i], peer)) {
+		if (conns[i].id == id &&
+		    !bt_conn_addr_le_cmp(&conns[i], peer)) {
 			return bt_conn_ref(&conns[i]);
 		}
 	}
@@ -1624,7 +1626,7 @@ struct bt_conn *bt_conn_lookup_state_le(const bt_addr_le_t *peer,
 	return NULL;
 }
 
-void bt_conn_disconnect_all(void)
+void bt_conn_disconnect_all(u8_t id)
 {
 	int i;
 
@@ -1632,6 +1634,10 @@ void bt_conn_disconnect_all(void)
 		struct bt_conn *conn = &conns[i];
 
 		if (!atomic_get(&conn->ref)) {
+			continue;
+		}
+
+		if (conn->id != id) {
 			continue;
 		}
 
@@ -1667,6 +1673,7 @@ int bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *info)
 {
 	info->type = conn->type;
 	info->role = conn->role;
+	info->id = conn->id;
 
 	switch (conn->type) {
 	case BT_CONN_TYPE_LE:
@@ -1765,7 +1772,9 @@ int bt_conn_disconnect(struct bt_conn *conn, u8_t reason)
 	case BT_CONN_CONNECT_SCAN:
 		conn->err = reason;
 		bt_conn_set_state(conn, BT_CONN_DISCONNECTED);
-		bt_le_scan_update(false);
+		if (IS_ENABLED(CONFIG_BT_CENTRAL)) {
+			bt_le_scan_update(false);
+		}
 		return 0;
 	case BT_CONN_CONNECT:
 #if defined(CONFIG_BT_BREDR)
@@ -1813,7 +1822,7 @@ struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 		return NULL;
 	}
 
-	conn = bt_conn_lookup_addr_le(peer);
+	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, peer);
 	if (conn) {
 		switch (conn->state) {
 		case BT_CONN_CONNECT_SCAN:
@@ -1832,6 +1841,9 @@ struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 	if (!conn) {
 		return NULL;
 	}
+
+	/* Only default identity supported for now */
+	conn->id = BT_ID_DEFAULT;
 
 	/* Set initial address - will be updated later if necessary. */
 	bt_addr_le_copy(&conn->le.resp_addr, peer);
@@ -1854,7 +1866,7 @@ int bt_le_set_auto_conn(bt_addr_le_t *addr,
 		return -EINVAL;
 	}
 
-	conn = bt_conn_lookup_addr_le(addr);
+	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, addr);
 	if (!conn) {
 		conn = bt_conn_add_le(addr);
 		if (!conn) {
@@ -1863,6 +1875,9 @@ int bt_le_set_auto_conn(bt_addr_le_t *addr,
 	}
 
 	if (param) {
+		/* Only default identity is supported */
+		conn->id = BT_ID_DEFAULT;
+
 		bt_conn_set_param_le(conn, param);
 
 		if (!atomic_test_and_set_bit(conn->flags,
@@ -1949,13 +1964,20 @@ int bt_conn_auth_cb_register(const struct bt_conn_auth_cb *cb)
 		return 0;
 	}
 
-	/* cancel callback should always be provided */
-	if (!cb->cancel) {
-		return -EINVAL;
-	}
-
 	if (bt_auth) {
 		return -EALREADY;
+	}
+
+	/* The cancel callback must always be provided if the app provides
+	 * interactive callbacks.
+	 */
+	if (!cb->cancel &&
+	    (cb->passkey_display || cb->passkey_entry || cb->passkey_confirm ||
+#if defined(CONFIG_BT_BREDR)
+	     cb->pincode_entry ||
+#endif
+	     cb->pairing_confirm)) {
+		return -EINVAL;
 	}
 
 	bt_auth = cb;
@@ -2122,6 +2144,8 @@ int bt_conn_init(void)
 
 			if (atomic_test_bit(conn->flags,
 					    BT_CONN_AUTO_CONNECT)) {
+				/* Only the default identity is supported */
+				conn->id = BT_ID_DEFAULT;
 				bt_conn_set_state(conn, BT_CONN_CONNECT_SCAN);
 			}
 		}
