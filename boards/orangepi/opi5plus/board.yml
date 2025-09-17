@@ -1,0 +1,8 @@
+board:
+  name: opi5plus
+  full_name: Orange Pi 5 Plus
+  vendor: orangepi
+  socs:
+  - name: rk3588
+    variants:
+    - name: smp

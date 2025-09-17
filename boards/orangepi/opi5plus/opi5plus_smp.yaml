@@ -1,0 +1,14 @@
+identifier: opi5plus/rk3588/smp
+name: Orange Pi 5 Plus with SMP
+type: mcu
+arch: arm64
+toolchain:
+  - zephyr
+  - cross-compile
+ram: 1024
+supported:
+  - smp
+testing:
+  ignore_tags:
+    - net
+    - bluetooth
