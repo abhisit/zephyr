@@ -1,0 +1,13 @@
+identifier: opi5plus
+name: Orange Pi 5 Plus
+type: mcu
+arch: arm64
+toolchain:
+  - zephyr
+  - cross-compile
+flash: 16
+ram: 4096
+testing:
+  ignore_tags:
+    - net
+    - bluetooth
